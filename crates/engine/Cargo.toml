@@ -10,3 +10,8 @@ warble-dsp.workspace = true
 cpal.workspace = true
 rtrb.workspace = true
 symphonia.workspace = true
+
+# Raise the audio threads to real-time priority (MMCSS "Pro Audio") so a game maxing out the CPU
+# doesn't make the call audio crackle. Off, cpal leaves them at normal priority on Windows.
+[target.'cfg(windows)'.dependencies]
+cpal = { workspace = true, features = ["realtime"] }
