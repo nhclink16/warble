@@ -269,6 +269,12 @@ impl DriftReader {
         }
     }
 
+    /// The device callback being read is `frames` long, even if it's read in `MAX_BLOCK`
+    /// pieces: size the cushion for all of it, or the later pieces run dry.
+    pub fn callback(&mut self, frames: usize) {
+        self.reader_block = self.reader_block.max(frames as f64 * self.ratio);
+    }
+
     /// Fill `out` (played from time `now`) with resampled audio. Returns true if the ring ran
     /// dry partway (an underrun): the rest of `out` is silence and the reader waits until the
     /// ring is back at its target. While waiting (including at startup) it outputs silence and
@@ -493,8 +499,16 @@ impl Graph {
         }
     }
 
+    /// The device callback being rendered is `frames` long; see `DriftReader::callback`.
+    pub fn callback(&mut self, frames: usize) {
+        if let Some(mic) = &mut self.mic {
+            mic.callback(frames);
+        }
+    }
+
     /// Render the next `out.len()` mono samples, played from time `now`. Real-time safe.
     pub fn process(&mut self, out: &mut [f32], now: f64) {
+        self.callback(out.len());
         while let Ok(command) = self.commands.pop() {
             self.board.apply(command);
         }
@@ -861,6 +875,36 @@ mod tests {
             (latency_ms - TARGET_MS).abs() < 2.0,
             "settled at {latency_ms:.1} ms"
         );
+    }
+
+    #[test]
+    fn big_callbacks_read_in_pieces_dont_underrun() {
+        // A device asking for 4096 frames at a time gets them rendered in MAX_BLOCK pieces;
+        // the cushion has to cover the whole callback, not just one piece.
+        let (mut tx, mut rx) = ring(48000, 48000);
+        let callback = 2 * MAX_BLOCK;
+        let mut out = vec![0.0; MAX_BLOCK];
+        let (mut mic_k, mut out_k, mut late_underruns) = (0u64, 0u64, 0);
+        loop {
+            let mic_t = (mic_k + 1) as f64 * 0.01;
+            let out_t = out_k as f64 * callback as f64 / 48000.0;
+            if mic_t.min(out_t) > 120.0 {
+                break;
+            }
+            if mic_t <= out_t {
+                tx.push(480, std::iter::repeat_n(0.0, 480), mic_t);
+                mic_k += 1;
+            } else {
+                rx.callback(callback);
+                for _ in 0..2 {
+                    if rx.read(&mut out, out_t) && out_t > 10.0 {
+                        late_underruns += 1;
+                    }
+                }
+                out_k += 1;
+            }
+        }
+        assert_eq!(late_underruns, 0, "underruns after startup");
     }
 
     fn sound(value: f32, len: usize, rate: u32) -> Arc<Sound> {

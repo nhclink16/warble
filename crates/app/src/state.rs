@@ -409,7 +409,15 @@ impl State {
     }
 
     fn loaded(&mut self, (sounds, errors): (Vec<Sound>, Vec<String>)) {
-        self.sounds.extend(sounds);
+        for sound in sounds {
+            // A file already on the board (re-added from the sounds folder): keep one tile, or
+            // removing either would delete the file the other still plays.
+            if self.sounds.iter().any(|s| same_file(&s.path, &sound.path)) {
+                self.engine.remove_sound(sound.id);
+            } else {
+                self.sounds.push(sound);
+            }
+        }
         self.sounds.sort_by_key(|s| s.name.to_lowercase());
         if let Some(first) = errors.first() {
             self.notice = Some(match errors.len() {
@@ -472,6 +480,15 @@ pub fn tray_tooltip(effect: bool, preset: Preset) -> String {
     } else {
         "Warble: voice effect off".into()
     }
+}
+
+/// Windows paths differ in case and form for the same file, so compare resolved paths too.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(a), Ok(b)) if a == b
+        )
 }
 
 fn load_files(

@@ -113,8 +113,10 @@ pub fn list_sounds(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Copies `src` into `dir` under its own name, or "name (2).ext" and so on when that's taken.
+/// The name is claimed by creating the file, so two imports at once never share one.
 pub fn copy_in(src: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
+    let mut input = std::fs::File::open(src)?;
     let stem = sound_name(src);
     let ext = src
         .extension()
@@ -122,11 +124,21 @@ pub fn copy_in(src: &Path, dir: &Path) -> std::io::Result<PathBuf> {
         .unwrap_or_default();
     let mut dest = dir.join(src.file_name().unwrap_or_default());
     let mut n = 2;
-    while dest.exists() {
-        dest = dir.join(format!("{stem} ({n}).{ext}"));
-        n += 1;
+    let mut output = loop {
+        match std::fs::File::create_new(&dest) {
+            Ok(f) => break f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                dest = dir.join(format!("{stem} ({n}).{ext}"));
+                n += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    if let Err(e) = std::io::copy(&mut input, &mut output) {
+        drop(output);
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
     }
-    std::fs::copy(src, &dest)?;
     Ok(dest)
 }
 

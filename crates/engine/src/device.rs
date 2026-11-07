@@ -239,8 +239,12 @@ impl Drop for Real {
 /// Open streams, kept alive until dropped.
 struct Session {
     _streams: Vec<Stream>,
-    /// Set by any stream's error callback.
+    /// Set by the error callback of any stream the call needs.
     failed: Arc<AtomicBool>,
+    /// Set by the side monitor's error callback (when the cable is the master). With
+    /// monitoring off it's left dead, so a headphone or default-speaker change can't cut the
+    /// call; turning monitoring on reopens the session.
+    monitor_failed: Arc<AtomicBool>,
     /// The devices this session resolved to (input, cable, monitor), to notice new ones.
     names: [Option<String>; 3],
     /// Every wanted device is open.
@@ -280,7 +284,8 @@ fn run(mut config: Config, shared: &Shared, rx: Receiver<Msg>, ready: SyncSender
             Err(RecvTimeoutError::Timeout) => {}
         }
         let Some(s) = &session else { continue };
-        if s.failed.load(Relaxed) {
+        let monitor_lost = s.monitor_failed.load(Relaxed) && shared.controls.monitor.load(Relaxed);
+        if s.failed.load(Relaxed) || monitor_lost {
             // Drop the dead streams now; reopen once `next_try` comes round.
             session = None;
             shared.stopped();
@@ -312,6 +317,7 @@ fn open_guarded(config: &Config, shared: &Shared, small_buffers: bool) -> Sessio
         Session {
             _streams: Vec::new(),
             failed: Arc::default(),
+            monitor_failed: Arc::default(),
             names: Default::default(),
             complete: false,
             build_failed: true,
@@ -410,6 +416,7 @@ fn open(config: &Config, shared: &Shared, small_buffers: bool) -> Session {
     let resolved = resolve(&host, config);
     let names = resolved.names();
     let failed = Arc::new(AtomicBool::new(false));
+    let monitor_failed = Arc::new(AtomicBool::new(false));
     let mut build_failed = false;
     let (mut cable_err, mut mic_err, mut monitor_err) = (None, None, None);
 
@@ -440,6 +447,7 @@ fn open(config: &Config, shared: &Shared, small_buffers: bool) -> Session {
         match open_set(
             shared,
             &failed,
+            &monitor_failed,
             cable,
             mic.as_ref(),
             monitor.as_ref(),
@@ -458,7 +466,7 @@ fn open(config: &Config, shared: &Shared, small_buffers: bool) -> Session {
     if opened.is_none() {
         // No cable: run the graph on the monitor so effects can still be previewed.
         if let Some(monitor) = &monitor {
-            match open_set(shared, &failed, monitor, mic.as_ref(), None, true) {
+            match open_set(shared, &failed, &failed, monitor, mic.as_ref(), None, true) {
                 Ok(set) => opened = Some(set),
                 Err(e) => {
                     monitor_err = Some(couldnt_open(&monitor.name, &e));
@@ -498,6 +506,7 @@ fn open(config: &Config, shared: &Shared, small_buffers: bool) -> Session {
     Session {
         _streams: streams,
         failed,
+        monitor_failed,
         names,
         complete,
         build_failed,
@@ -513,9 +522,11 @@ struct Set {
 
 /// Open `master` running the graph, plus the mic and (when `master` is the cable) the monitor.
 /// Fails only if the master stream fails; mic and monitor failures are reported in `Set`.
+/// `failed` flags the master and mic streams; `monitor_failed` the side monitor.
 fn open_set(
     shared: &Shared,
     failed: &Arc<AtomicBool>,
+    monitor_failed: &Arc<AtomicBool>,
     master: &Endpoint,
     mic: Option<&Endpoint>,
     monitor: Option<&Endpoint>,
@@ -541,12 +552,14 @@ fn open_set(
     let master_stream = if master_is_monitor {
         let controls = controls.clone();
         let mut gain = 0.0;
-        build_output(master, failed, move |buf| {
+        build_output(master, failed, move |buf, frames| {
+            graph.callback(frames);
             graph.process(buf, epoch.elapsed().as_secs_f64());
             graph::ramp(buf, &mut gain, controls.monitor_gain());
         })
     } else {
-        build_output(master, failed, move |buf| {
+        build_output(master, failed, move |buf, frames| {
+            graph.callback(frames);
             graph.process(buf, epoch.elapsed().as_secs_f64())
         })
     }?;
@@ -565,7 +578,7 @@ fn open_set(
         None => Ok(()),
     };
     let monitor = match monitor.zip(monitor_reader) {
-        Some((m, reader)) => start(monitor_stream(m, failed, reader, controls, epoch)),
+        Some((m, reader)) => start(monitor_stream(m, monitor_failed, reader, controls, epoch)),
         None => Ok(()),
     };
     Ok(Set {
@@ -583,7 +596,8 @@ fn monitor_stream(
     epoch: Instant,
 ) -> Result<Stream, cpal::Error> {
     let mut gain = 0.0;
-    build_output(endpoint, failed, move |buf| {
+    build_output(endpoint, failed, move |buf, frames| {
+        reader.callback(frames);
         reader.read(buf, epoch.elapsed().as_secs_f64());
         graph::ramp(buf, &mut gain, controls.monitor_gain());
     })
@@ -651,11 +665,12 @@ macro_rules! with_sample_type {
     };
 }
 
-/// An output stream that renders mono with `render` and copies it to every channel.
+/// An output stream that renders mono with `render` and copies it to every channel. `render`
+/// gets at most `MAX_BLOCK` frames at a time, plus the length of the whole device callback.
 fn build_output(
     endpoint: &Endpoint,
     failed: &Arc<AtomicBool>,
-    render: impl FnMut(&mut [f32]) + Send + 'static,
+    render: impl FnMut(&mut [f32], usize) + Send + 'static,
 ) -> Result<Stream, cpal::Error> {
     with_sample_type!(endpoint.format, output_typed(endpoint, failed, render))
 }
@@ -663,16 +678,17 @@ fn build_output(
 fn output_typed<T: SizedSample + FromSample<f32>>(
     endpoint: &Endpoint,
     failed: &Arc<AtomicBool>,
-    mut render: impl FnMut(&mut [f32]) + Send + 'static,
+    mut render: impl FnMut(&mut [f32], usize) + Send + 'static,
 ) -> Result<Stream, cpal::Error> {
     let channels = usize::from(endpoint.config.channels.max(1));
     let mut mono = vec![0.0f32; graph::MAX_BLOCK];
     endpoint.device.build_output_stream(
         endpoint.config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
+            let frames = data.len() / channels;
             for chunk in data.chunks_mut(graph::MAX_BLOCK * channels) {
                 let mono = &mut mono[..chunk.len() / channels];
-                render(mono);
+                render(mono, frames);
                 for (frame, &s) in chunk.chunks_mut(channels).zip(mono.iter()) {
                     frame.fill(T::from_sample(s));
                 }

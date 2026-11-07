@@ -89,6 +89,17 @@ fn dropped_audio_files_become_tiles_that_play_and_remove() {
 }
 
 #[test]
+fn dropping_a_file_already_on_the_board_keeps_one_tile() {
+    let mut rt = app();
+    let file = PathBuf::from("sounds/Bruh.wav");
+    rt.drop_files(vec![file.clone()], Some((200.0, 300.0)));
+    settle(&mut rt);
+    rt.drop_files(vec![file], Some((200.0, 300.0)));
+    settle(&mut rt);
+    assert_eq!(rt.state.sounds.len(), 1);
+}
+
+#[test]
 fn a_missing_cable_offers_the_download() {
     let mut rt = app();
     rt.update(|s, _| {
