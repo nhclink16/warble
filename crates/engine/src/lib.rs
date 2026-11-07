@@ -26,7 +26,13 @@
 
 pub use warble_dsp::Preset;
 
+mod device;
+mod graph;
+mod sound;
+
 use std::path::Path;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Mutex, MutexGuard};
 
 /// One audio device as the OS names it. The name is also its id in settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,14 +49,27 @@ pub struct Devices {
 
 /// Every input and output device on the default host (WASAPI on Windows).
 pub fn list_devices() -> Devices {
-    todo!("warble-engine: list_devices")
+    // A misbehaving audio driver must not take the UI down with it.
+    std::panic::catch_unwind(device::list_devices).unwrap_or_default()
 }
 
 /// The output device a virtual cable exposes, if one is installed: VB-CABLE's
 /// "CABLE Input (VB-Audio Virtual Cable)" (match on "CABLE Input", case-insensitive).
 pub fn find_virtual_cable(devices: &Devices) -> Option<String> {
-    let _ = devices;
-    todo!("warble-engine: find_virtual_cable")
+    devices
+        .outputs
+        .iter()
+        .find(|d| is_cable_input(&d.name))
+        .map(|d| d.name.clone())
+}
+
+fn is_cable_input(name: &str) -> bool {
+    name.to_lowercase().contains("cable input")
+}
+
+/// Lock, shrugging off poisoning: every value behind these locks stays valid on its own.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Which devices to use. `None` means: system default (input, monitor) or auto-detect (cable).
@@ -88,16 +107,18 @@ pub struct Engine {
 }
 
 enum Inner {
-    Mock(std::sync::Mutex<mock::Mock>),
-    /// TODO(warble-engine): the real engine (device thread, lock-free control, atomics).
-    Real(()),
+    Mock(Mutex<mock::Mock>),
+    /// Device thread, lock-free control, atomics: see `device`.
+    Real(device::Real),
 }
 
 impl Engine {
     /// Start with these devices. Never fails: problems show in `status().error`.
+    /// Returns once the first attempt to open them has finished (a few seconds at most).
     pub fn start(config: Config) -> Engine {
-        let _ = config;
-        todo!("warble-engine: Engine::start")
+        Engine {
+            inner: Inner::Real(device::Real::start(config)),
+        }
     }
 
     /// No devices or threads. `status()` reports a plausible running state (VB-CABLE found,
@@ -105,13 +126,8 @@ impl Engine {
     /// method works and is reflected in `status()` (e.g. `play_sound` marks the sound playing
     /// for a while). Deterministic: meters advance per `status()` call, not by wall clock.
     pub fn mock() -> Engine {
-        Engine { inner: Inner::Mock(std::sync::Mutex::new(mock::Mock::default())) }
-    }
-
-    fn mock_state(&self) -> Option<std::sync::MutexGuard<'_, mock::Mock>> {
-        match &self.inner {
-            Inner::Mock(m) => Some(m.lock().unwrap_or_else(|e| e.into_inner())),
-            Inner::Real(_) => None,
+        Engine {
+            inner: Inner::Mock(Mutex::new(mock::Mock::default())),
         }
     }
 
@@ -126,111 +142,106 @@ impl Engine {
 
     /// Switch devices. Keeps preset, gains, loaded sounds and monitor settings.
     pub fn restart(&self, config: Config) {
-        if let Some(mut m) = self.mock_state() {
-            m.config = config;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).config = config,
+            Inner::Real(r) => r.restart(config),
         }
-        todo!("warble-engine: Engine::restart")
     }
 
     pub fn set_preset(&self, preset: Preset) {
-        if let Some(mut m) = self.mock_state() {
-            m.preset = preset;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).preset = preset,
+            Inner::Real(r) => r.controls().set_preset(preset),
         }
-        todo!("warble-engine: Engine::set_preset")
     }
 
     /// Off sends the dry voice (soundboard still plays).
     pub fn set_effect_enabled(&self, enabled: bool) {
-        if let Some(mut m) = self.mock_state() {
-            m.effect_enabled = enabled;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).effect_enabled = enabled,
+            Inner::Real(r) => r.controls().effect_enabled.store(enabled, Relaxed),
         }
-        todo!("warble-engine: Engine::set_effect_enabled")
     }
 
     /// Linear gain on the mic before effects, 0.0..=4.0.
     pub fn set_mic_gain(&self, gain: f32) {
-        if let Some(mut m) = self.mock_state() {
-            m.mic_gain = gain;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).mic_gain = gain,
+            Inner::Real(r) => r.controls().mic_gain.store(gain),
         }
-        todo!("warble-engine: Engine::set_mic_gain")
     }
 
     /// Hear yourself: the exact cable mix, sent to the monitor device.
     pub fn set_monitor(&self, enabled: bool) {
-        if let Some(mut m) = self.mock_state() {
-            m.monitor = enabled;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).monitor = enabled,
+            Inner::Real(r) => r.controls().monitor.store(enabled, Relaxed),
         }
-        todo!("warble-engine: Engine::set_monitor")
     }
 
     /// 0.0..=1.0
     pub fn set_monitor_volume(&self, volume: f32) {
-        if let Some(mut m) = self.mock_state() {
-            m.monitor_volume = volume;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).monitor_volume = volume,
+            Inner::Real(r) => r.controls().monitor_volume.store(volume),
         }
-        todo!("warble-engine: Engine::set_monitor_volume")
     }
 
     /// Soundboard level into the call (and monitor), 0.0..=1.0.
     pub fn set_sound_volume(&self, volume: f32) {
-        if let Some(mut m) = self.mock_state() {
-            m.sound_volume = volume;
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).sound_volume = volume,
+            Inner::Real(r) => r.controls().sound_volume.store(volume),
         }
-        todo!("warble-engine: Engine::set_sound_volume")
     }
 
     /// Decode a WAV, MP3, OGG/Vorbis or FLAC file into memory. Runs on the caller's thread.
     /// Errors are plain English ("Couldn't read clip.mp3: unsupported format").
-    /// The mock accepts any path without reading it.
+    /// Clips longer than 5 minutes are refused. The mock accepts any path without reading it.
     pub fn load_sound(&self, path: &Path) -> Result<SoundId, String> {
-        if let Some(mut m) = self.mock_state() {
-            let _ = path;
-            m.next_sound += 1;
-            return Ok(SoundId(m.next_sound));
+        match &self.inner {
+            Inner::Mock(m) => {
+                let mut m = lock(m);
+                m.next_sound += 1;
+                Ok(SoundId(m.next_sound))
+            }
+            Inner::Real(r) => r.load_sound(path),
         }
-        todo!("warble-engine: Engine::load_sound")
     }
 
     /// Stops it if playing and frees it.
     pub fn remove_sound(&self, id: SoundId) {
-        if let Some(mut m) = self.mock_state() {
-            m.playing.retain(|(s, _)| *s != id);
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).playing.retain(|(s, _)| *s != id),
+            Inner::Real(r) => r.remove_sound(id),
         }
-        todo!("warble-engine: Engine::remove_sound")
     }
 
     /// Play from the start; pressing a sound that is already playing restarts it.
     /// Several different sounds can play at once.
     pub fn play_sound(&self, id: SoundId) {
-        if let Some(mut m) = self.mock_state() {
-            m.playing.retain(|(s, _)| *s != id);
-            m.playing.push((id, mock::PLAY_TICKS));
-            return;
+        match &self.inner {
+            Inner::Mock(m) => {
+                let mut m = lock(m);
+                m.playing.retain(|(s, _)| *s != id);
+                m.playing.push((id, mock::PLAY_TICKS));
+            }
+            Inner::Real(r) => r.play_sound(id),
         }
-        todo!("warble-engine: Engine::play_sound")
     }
 
     pub fn stop_sounds(&self) {
-        if let Some(mut m) = self.mock_state() {
-            m.playing.clear();
-            return;
+        match &self.inner {
+            Inner::Mock(m) => lock(m).playing.clear(),
+            Inner::Real(r) => r.stop_sounds(),
         }
-        todo!("warble-engine: Engine::stop_sounds")
     }
 
     pub fn status(&self) -> Status {
-        if let Some(mut m) = self.mock_state() {
-            return m.status();
+        match &self.inner {
+            Inner::Mock(m) => lock(m).status(),
+            Inner::Real(r) => r.status(),
         }
-        todo!("warble-engine: Engine::status")
     }
 }
 
@@ -271,9 +282,15 @@ mod mock {
     }
 
     pub fn devices() -> Devices {
-        let d = |name: &str, is_default| DeviceInfo { name: name.to_string(), is_default };
+        let d = |name: &str, is_default| DeviceInfo {
+            name: name.to_string(),
+            is_default,
+        };
         Devices {
-            inputs: vec![d("Microphone (USB Audio Device)", true), d("CABLE Output (VB-Audio Virtual Cable)", false)],
+            inputs: vec![
+                d("Microphone (USB Audio Device)", true),
+                d("CABLE Output (VB-Audio Virtual Cable)", false),
+            ],
             outputs: vec![
                 d("Headphones (USB Audio Device)", true),
                 d("Speakers (High Definition Audio Device)", false),
@@ -291,9 +308,16 @@ mod mock {
             self.playing.retain(|(_, left)| *left > 0);
             let t = self.tick as f32 * 0.21;
             // A talking-voice shape: two slow sines, clipped to silence between "words".
-            let voice = ((t.sin() * 0.5 + (t * 2.7).sin() * 0.3) * self.mic_gain.min(2.0)).max(0.0).min(1.0);
-            let sounds = if self.playing.is_empty() { 0.0 } else { 0.35 * self.sound_volume };
-            let pick = |want: &Option<String>, fallback: &str| Some(want.clone().unwrap_or_else(|| fallback.to_string()));
+            let voice =
+                ((t.sin() * 0.5 + (t * 2.7).sin() * 0.3) * self.mic_gain.min(2.0)).clamp(0.0, 1.0);
+            let sounds = if self.playing.is_empty() {
+                0.0
+            } else {
+                0.35 * self.sound_volume
+            };
+            let pick = |want: &Option<String>, fallback: &str| {
+                Some(want.clone().unwrap_or_else(|| fallback.to_string()))
+            };
             Status {
                 running: true,
                 input_name: pick(&self.config.input, "Microphone (USB Audio Device)"),
@@ -306,5 +330,119 @@ mod mock {
                 underruns: 0,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(name: &str) -> DeviceInfo {
+        DeviceInfo {
+            name: name.to_string(),
+            is_default: false,
+        }
+    }
+
+    #[test]
+    fn engine_is_send_and_sync() {
+        fn check<T: Send + Sync>() {}
+        check::<Engine>();
+    }
+
+    #[test]
+    fn finds_vb_cable_among_outputs() {
+        let mut devices = Devices {
+            inputs: vec![
+                info("Microphone (USB Audio Device)"),
+                info("CABLE Output (VB-Audio Virtual Cable)"),
+            ],
+            outputs: vec![info("Speakers (High Definition Audio Device)")],
+        };
+        assert_eq!(
+            find_virtual_cable(&devices),
+            None,
+            "the cable's recording side doesn't count"
+        );
+        devices
+            .outputs
+            .push(info("CABLE Input (VB-Audio Virtual Cable)"));
+        assert_eq!(
+            find_virtual_cable(&devices).as_deref(),
+            Some("CABLE Input (VB-Audio Virtual Cable)")
+        );
+        devices.outputs = vec![
+            info("Headphones"),
+            info("cable input (vb-audio virtual cable)"),
+        ];
+        assert_eq!(
+            find_virtual_cable(&devices).as_deref(),
+            Some("cable input (vb-audio virtual cable)")
+        );
+        assert_eq!(
+            find_virtual_cable(&mock::devices()).as_deref(),
+            Some("CABLE Input (VB-Audio Virtual Cable)")
+        );
+        assert_eq!(find_virtual_cable(&Devices::default()), None);
+    }
+
+    /// Names no machine has, so this behaves like a PC with no audio devices at all.
+    fn nowhere() -> Config {
+        Config {
+            input: Some("No Such Microphone".into()),
+            cable: Some("No Such Cable".into()),
+            monitor: Some("No Such Headphones".into()),
+        }
+    }
+
+    #[test]
+    fn start_without_devices_reports_an_error() {
+        let engine = Engine::start(nowhere());
+        let status = engine.status();
+        assert!(!status.running);
+        assert_eq!(
+            status.error.as_deref(),
+            Some("Can't find \"No Such Cable\". Is it plugged in?")
+        );
+        assert_eq!(
+            (status.input_name, status.cable_name, status.monitor_name),
+            (None, None, None)
+        );
+
+        // Everything else still works without devices.
+        engine.set_preset(Preset::Robot);
+        engine.set_effect_enabled(false);
+        engine.set_mic_gain(9.0);
+        engine.set_monitor(true);
+        engine.set_monitor_volume(0.5);
+        engine.set_sound_volume(0.5);
+        let path = sound::tests::temp_file("engine.wav", &sound::tests::small_wav());
+        let id = engine.load_sound(&path).expect("loads");
+        assert!(
+            engine
+                .load_sound(Path::new("missing.ogg"))
+                .unwrap_err()
+                .contains("missing.ogg")
+        );
+        engine.play_sound(id);
+        engine.play_sound(SoundId(999));
+        engine.stop_sounds();
+        engine.remove_sound(id);
+        engine.restart(Config {
+            input: Some("Still Missing".into()),
+            ..nowhere()
+        });
+        assert!(engine.status().playing.is_empty());
+        drop(engine); // joins the device thread
+    }
+
+    #[test]
+    fn mock_still_plays_pretend() {
+        let engine = Engine::mock();
+        let id = engine.load_sound(Path::new("anything.mp3")).unwrap();
+        engine.play_sound(id);
+        let status = engine.status();
+        assert!(status.running && status.playing == vec![id]);
+        assert_eq!(engine.devices(), mock::devices());
     }
 }
