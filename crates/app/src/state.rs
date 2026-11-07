@@ -9,7 +9,9 @@ use rune::tray::{Tray, TrayItem};
 use rune::{AppHandle, FileDialogOptions, Live, Tx};
 use warble_engine::{Devices, Engine, Preset, SoundId, Status};
 
+use crate::find::Find;
 use crate::settings::{self, AUDIO_EXTS, Settings};
+use crate::trim::Trim;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -122,6 +124,9 @@ pub struct State {
     /// The no-cable scene: report VB-CABLE as missing whatever the engine says.
     pub sim_no_cable: bool,
     pub dialog_open: bool,
+    /// The Find sounds page, and the trim editor while it's open (both on the Soundboard tab).
+    pub find: Find,
+    pub trim: Option<Trim>,
     tray_shows: Option<(bool, Preset)>,
     save_due: Option<Instant>,
     last_poll: f64,
@@ -154,6 +159,7 @@ impl State {
         engine.set_sound_volume(settings.sound_volume);
         engine.set_hear_sounds(settings.hear_sounds);
         State {
+            find: Find::new(&settings.freesound_key),
             status: engine.status(),
             devices: engine.devices(),
             engine: Arc::new(engine),
@@ -171,6 +177,7 @@ impl State {
             headless: false,
             sim_no_cable: false,
             dialog_open: false,
+            trim: None,
             tray_shows: None,
             save_due: None,
             last_poll: f64::NEG_INFINITY,
@@ -179,6 +186,37 @@ impl State {
 
     pub fn sounds_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join("sounds"))
+    }
+
+    /// The config folder, or with none (mock mode, tests) a temporary one: where yt-dlp lives.
+    pub fn work_dir(&self) -> PathBuf {
+        self.dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("warble-mock"))
+    }
+
+    /// Runs `work` on a worker thread once the app runs, then `done` with its result on the UI
+    /// thread; inline in tests and snapshots.
+    pub fn off_thread<T: Send + 'static>(
+        &mut self,
+        work: impl FnOnce() -> T + Send + 'static,
+        done: impl FnOnce(&mut State, T) + Send + 'static,
+    ) {
+        match self.handle.clone() {
+            Some(h) if !self.headless => {
+                std::thread::spawn(move || {
+                    let result = work();
+                    h.update(move |s, tx| {
+                        done(s, result);
+                        tx.instant();
+                    });
+                });
+            }
+            _ => {
+                let result = work();
+                done(self, result);
+            }
+        }
     }
 
     /// Loads what's already in the sounds folder.
@@ -228,7 +266,8 @@ impl State {
             || st.input_name != old.input_name
             || st.cable_name != old.cable_name
             || st.monitor_name != old.monitor_name
-            || st.playing != old.playing;
+            || st.playing != old.playing
+            || st.preview != old.preview;
         self.status = st;
         changed
     }
@@ -251,6 +290,9 @@ impl State {
     pub fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.open_picker = None;
+        if tab != Tab::Soundboard && self.status.preview.is_some() {
+            self.stop_preview();
+        }
         if tab == Tab::Setup {
             // Headsets come and go; show what's plugged in now.
             self.devices = self.engine.devices();
@@ -397,7 +439,7 @@ impl State {
 
     /// Decodes (and with `copy`, first copies in) on a worker thread once the app runs, so a
     /// big file never stalls the window; inline in tests.
-    fn load_paths(&mut self, paths: Vec<PathBuf>, copy: bool) {
+    pub(crate) fn load_paths(&mut self, paths: Vec<PathBuf>, copy: bool) {
         let engine = self.engine.clone();
         let into = if copy { self.sounds_dir() } else { None };
         let work = move || load_files(&engine, paths, into.as_deref());
@@ -436,7 +478,7 @@ impl State {
 
     // --- Saving and the tray ---
 
-    fn changed(&mut self) {
+    pub(crate) fn changed(&mut self) {
         if self.dir.is_some() {
             self.save_due = Some(Instant::now() + SAVE_DELAY);
         }

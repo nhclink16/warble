@@ -4,10 +4,15 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod find;
+mod find_view;
 mod icon;
+mod library;
 mod settings;
 mod state;
+mod trim;
 mod ui;
+mod youtube;
 
 use rune::tray::{Tray, TrayEvent, TrayIcon, TraySpec};
 use rune::{App, AppHandle, AppSpec, Shortcut, ShortcutError, Tx};

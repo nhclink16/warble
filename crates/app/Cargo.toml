@@ -22,3 +22,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+# The sound search and downloads (Myinstants, Freesound, yt-dlp). A small blocking client. On
+# Windows it uses the system's own TLS and certificates (schannel): rustls' crypto (ring) is C
+# that can't be cross-checked from Linux.
+ureq = { version = "3.5", default-features = false, features = ["native-tls-no-default"] }
+
+[target.'cfg(not(windows))'.dependencies]
+ureq = { version = "3.5", default-features = false, features = ["rustls"] }

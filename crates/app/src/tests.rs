@@ -2,9 +2,10 @@
 
 use std::path::PathBuf;
 
-use rune::{Env, Runtime};
-use warble_engine::Preset;
+use rune::{Env, Key, KeyEvent, Mods, Runtime};
+use warble_engine::{Clip, Preset};
 
+use crate::find::YouTube;
 use crate::state::{State, Tab};
 use crate::ui;
 
@@ -110,4 +111,71 @@ fn a_missing_cable_offers_the_download() {
     settle(&mut rt);
     tap(&mut rt, "get-cable");
     assert_eq!(rt.take_url_requests(), [ui::VB_CABLE_URL]);
+}
+
+#[test]
+fn find_sounds_opens_from_the_board_and_its_sites_open_in_the_browser() {
+    let mut rt = app();
+    tap(&mut rt, "tabs/#0/segment1");
+    tap(&mut rt, "find-sounds");
+    assert!(rt.state.find.open);
+    assert!(rt.find("search-field").is_some() && rt.find("youtube").is_some());
+    assert!(rt.find("search-button").is_some());
+    tap(&mut rt, "site-1");
+    assert_eq!(rt.take_url_requests(), ["https://freesound.org/"]);
+    tap(&mut rt, "back");
+    assert!(!rt.state.find.open);
+    assert!(rt.find("empty").is_some(), "back on the board");
+}
+
+#[test]
+fn a_youtube_link_first_says_what_it_will_download() {
+    let mut rt = app();
+    rt.update(|s, _| {
+        s.open_find();
+        // Mock mode keeps yt-dlp in a temporary folder; make sure it isn't there.
+        let _ = std::fs::remove_file(crate::youtube::tool_path(&s.work_dir()));
+        s.find.link = rune::TextEdit::new("https://www.youtube.com/watch?v=jNQXAC9IVRw");
+    });
+    settle(&mut rt);
+    tap(&mut rt, "get-audio");
+    assert_eq!(rt.state.find.youtube, YouTube::AskToInstall);
+    assert!(rt.find("install-notice").is_some());
+    tap(&mut rt, "not-now");
+    assert_eq!(rt.state.find.youtube, YouTube::Idle);
+}
+
+#[test]
+fn the_trim_editor_plays_in_the_headphones_and_saves_a_new_tile() {
+    let mut rt = app();
+    let clip = Clip::new(vec![0.25; 8000 * 4], 8000);
+    rt.update(move |s, _| s.open_trim(clip, "Zoo: cut"));
+    settle(&mut rt);
+    assert_eq!(rt.state.find.trim_name.text, "Zoo cut");
+    // The arrow keys move a focused handle by a hundredth of the clip (here 0.05 s).
+    tap(&mut rt, "trim-start");
+    for _ in 0..4 {
+        rt.key(KeyEvent {
+            key: Key::Right,
+            mods: Mods::default(),
+        });
+    }
+    settle(&mut rt);
+    let t = rt.state.trim.as_ref().unwrap();
+    assert!((t.start - 0.2).abs() < 1e-9, "start at {}", t.start);
+    assert_eq!(t.range(), 1600..32000);
+
+    tap(&mut rt, "trim-play");
+    assert_eq!(rt.state.status.preview, Some(1600));
+    assert!(rt.state.status.playing.is_empty(), "not into the call");
+    tap(&mut rt, "trim-play");
+    assert_eq!(rt.state.status.preview, None, "pressed again, it stops");
+
+    tap(&mut rt, "trim-save");
+    assert!(rt.state.trim.is_none(), "closes once saved");
+    let sound = rt.state.sounds.last().expect("a new tile");
+    assert!(sound.name.starts_with("Zoo cut"), "{}", sound.name);
+    let bytes = std::fs::read(&sound.path).expect("written");
+    assert_eq!(bytes.len(), 44 + (32000 - 1600) * 2, "16-bit mono WAV");
+    let _ = std::fs::remove_file(&sound.path);
 }

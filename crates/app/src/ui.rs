@@ -11,6 +11,7 @@ use rune_kit::{
 };
 use warble_engine::{DeviceInfo, Preset};
 
+use crate::find_view;
 use crate::settings::AUDIO_EXTS;
 use crate::state::{self, Picker, SEGMENTS, Sound, State, Tab};
 
@@ -18,32 +19,32 @@ pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
 // --- Look ---
 
-const PAD: f32 = 16.0;
-const GAP: f32 = 12.0;
-const LABEL_W: f32 = 58.0;
+pub(crate) const PAD: f32 = 16.0;
+pub(crate) const GAP: f32 = 12.0;
+pub(crate) const LABEL_W: f32 = 58.0;
 
-const TITLE: TextStyle = TextStyle::new(15.0, 650.0);
-const HEADING: TextStyle = TextStyle::new(13.5, 600.0);
-const BODY: TextStyle = TextStyle::new(12.5, 400.0).lh(18.0);
-const LABEL: TextStyle = TextStyle::new(12.5, 500.0);
-const SMALL: TextStyle = TextStyle::new(11.5, 400.0).lh(16.0);
-const TINY: TextStyle = TextStyle::new(10.5, 500.0);
-const NUMBER: TextStyle = TextStyle::new(12.0, 500.0).features("'tnum' 1");
+pub(crate) const TITLE: TextStyle = TextStyle::new(15.0, 650.0);
+pub(crate) const HEADING: TextStyle = TextStyle::new(13.5, 600.0);
+pub(crate) const BODY: TextStyle = TextStyle::new(12.5, 400.0).lh(18.0);
+pub(crate) const LABEL: TextStyle = TextStyle::new(12.5, 500.0);
+pub(crate) const SMALL: TextStyle = TextStyle::new(11.5, 400.0).lh(16.0);
+pub(crate) const TINY: TextStyle = TextStyle::new(10.5, 500.0);
+pub(crate) const NUMBER: TextStyle = TextStyle::new(12.0, 500.0).features("'tnum' 1");
 
-fn bg() -> Color {
+pub(crate) fn bg() -> Color {
     oklch(0.165, 0.01, 265.0)
 }
-fn accent() -> Color {
+pub(crate) fn accent() -> Color {
     oklch(0.80, 0.14, 165.0)
 }
-fn warn() -> Color {
+pub(crate) fn warn() -> Color {
     oklch(0.83, 0.13, 80.0)
 }
-fn danger() -> Color {
+pub(crate) fn danger() -> Color {
     oklch(0.70, 0.16, 25.0)
 }
 /// The dark ink drawn on the accent.
-fn ink() -> Color {
+pub(crate) fn ink() -> Color {
     oklch(0.2, 0.02, 200.0)
 }
 
@@ -56,7 +57,7 @@ pub fn kit() -> Kit {
 }
 
 /// `colour` washed over `base`, opaque.
-fn wash(base: Color, colour: Color, amount: f32) -> Color {
+pub(crate) fn wash(base: Color, colour: Color, amount: f32) -> Color {
     let (a, b) = (base.to_oklab(), colour.to_oklab());
     Color::from_oklab(std::array::from_fn(|i| {
         if i == 3 {
@@ -67,7 +68,7 @@ fn wash(base: Color, colour: Color, amount: f32) -> Color {
     }))
 }
 
-fn card(k: &Kit) -> El {
+pub(crate) fn card(k: &Kit) -> El {
     col()
         .w_full()
         .padding(14.0)
@@ -85,7 +86,7 @@ fn keys(k: &Kit, chord: &str) -> El {
 
 macro_rules! glyph {
     ($name:ident, $body:expr) => {
-        static $name: Icon = Icon {
+        pub(crate) static $name: Icon = Icon {
             name: concat!("warble-", stringify!($name)),
             view: 16.0,
             body: $body,
@@ -229,6 +230,49 @@ glyph!(
     )
 );
 
+glyph!(
+    BACK,
+    concat!(r#"<path d="M9.75 3.5 5.25 8l4.5 4.5" "#, stroke!(), "/>")
+);
+glyph!(
+    SEARCH,
+    concat!(
+        r#"<circle cx="7" cy="7" r="4.5" "#,
+        stroke!(),
+        r#"/><path d="M10.5 10.5 13.75 13.75" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    HEADPHONES,
+    concat!(
+        r#"<path d="M2.5 10.5V8.25a5.5 5.5 0 0 1 11 0v2.25" "#,
+        stroke!(),
+        r#"/><rect x="1.75" y="9.25" width="3.25" height="5" rx="1.4" fill="currentColor"/><rect x="11" y="9.25" width="3.25" height="5" rx="1.4" fill="currentColor"/>"#
+    )
+);
+glyph!(
+    SCISSORS,
+    concat!(
+        r#"<circle cx="4.5" cy="11.5" r="2.25" "#,
+        stroke!(),
+        r#"/><circle cx="11.5" cy="11.5" r="2.25" "#,
+        stroke!(),
+        r#"/><path d="M6.1 9.9 12 2.25M9.9 9.9 4 2.25" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    CHECK,
+    concat!(
+        r#"<path d="M3.25 8.5 6.5 11.75 12.75 4.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+
 fn preset_icon(p: Preset) -> &'static Icon {
     match p {
         Preset::Normal => &NORMAL,
@@ -249,6 +293,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let mut layer = Vec::new();
     let body = match s.tab {
         Tab::Voice => scrolling(voice(s, cx, &k)),
+        Tab::Soundboard if s.trim.is_some() => find_view::trim_page(s, cx, &k),
+        Tab::Soundboard if s.find.open => find_view::find_page(s, &k),
         Tab::Soundboard => soundboard(s, cx, &k),
         Tab::Setup => scrolling(setup(s, &k, &mut layer)),
     };
@@ -270,7 +316,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
 }
 
 /// A tab's content in a scroll view, for windows shorter than it.
-fn scrolling(content: El) -> El {
+pub(crate) fn scrolling(content: El) -> El {
     col().key("page").grow(1.0).min_h(0.0).child(
         col()
             .key("scroll")
@@ -767,6 +813,7 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         .gap(8.0)
         .center_y()
         .child(add_button(k))
+        .child(find_button(k))
         .child(el().grow(1.0))
         .child(
             Button::new("Stop all")
@@ -845,6 +892,13 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         )
 }
 
+fn find_button(k: &Kit) -> El {
+    Button::new("Find sounds")
+        .on_press(State::open_find)
+        .build(k)
+        .key("find-sounds")
+}
+
 fn add_button(k: &Kit) -> El {
     Button::new("Add sounds…")
         .icon(&PLUS)
@@ -876,6 +930,21 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
         .group_opacity(0.0, 1.0)
         .on_press(move |s: &mut State| s.remove_sound(id))
         .child(icon(&CLOSE, 12.0).color(k.c.icon_base));
+    let trim = el()
+        .key(format!("trim-{}", id.0))
+        .role("button")
+        .label(format!("Trim {}", sound.name))
+        .help("Trim")
+        .pin(None, Some(5.0), Some(29.0), None)
+        .size(20.0, 20.0)
+        .radius(10.0)
+        .center()
+        .fill(k.c.layer_03)
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .group_opacity(0.0, 1.0)
+        .on_press(move |s: &mut State| s.trim_sound(id))
+        .child(icon(&SCISSORS, 12.0).color(k.c.icon_base));
     col()
         .key(format!("sound-{}", id.0))
         .role("button")
@@ -938,6 +1007,7 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
                     }),
                 ),
         )
+        .child(trim)
         .child(remove)
 }
 
@@ -970,7 +1040,7 @@ fn empty_state(k: &Kit) -> El {
                 .max_w(250.0),
         )
         .child(el().h(6.0))
-        .child(add_button(k))
+        .child(row().gap(8.0).child(add_button(k)).child(find_button(k)))
         .child(
             text("The first nine play with Ctrl+Shift+1 to 9.")
                 .font(SMALL)
@@ -980,7 +1050,7 @@ fn empty_state(k: &Kit) -> El {
 }
 
 /// A dismissable line about something that went wrong, such as a file that didn't load.
-fn notice(s: &State, k: &Kit) -> Option<El> {
+pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
     let message = s.notice.clone()?;
     Some(
         row()
@@ -1376,6 +1446,11 @@ pub const SCENES: &[Scene] = &[
         ];
     }),
     ("drop", |s| s.drop_hover = true),
+    ("find-start", find_view::scenes::start),
+    ("find", find_view::scenes::results),
+    ("find-offline", find_view::scenes::offline),
+    ("youtube-install", find_view::scenes::youtube_install),
+    ("trim", find_view::scenes::trim),
     ("load-error", |s| {
         s.add_sounds(
             ["Air horn.mp3", "Bruh.wav"]
