@@ -141,6 +141,13 @@ impl Controls {
             .collect()
     }
 
+    /// Says a preview is under way as soon as it's sent, before the audio thread picks it up,
+    /// so the UI never sees it flicker off.
+    pub fn set_preview_at(&self, at: Option<usize>) {
+        self.preview_at
+            .store(at.map_or(0, |a| a as u64 + 1), Relaxed);
+    }
+
     /// Where the headphone preview is in its clip, while one plays.
     pub fn preview_at(&self) -> Option<usize> {
         match self.preview_at.load(Relaxed) {

@@ -199,12 +199,15 @@ impl Real {
 
     pub fn preview(&self, sound: Arc<Sound>, start: usize, end: usize) {
         self.retire_preview(Some(sound.clone()));
-        self.send(Command::Preview(sound, start, end));
+        if self.send(Command::Preview(sound, start, end)) {
+            self.shared.controls.set_preview_at(Some(start));
+        }
     }
 
     pub fn stop_preview(&self) {
         self.retire_preview(None);
         self.send(Command::StopPreview);
+        self.shared.controls.set_preview_at(None);
     }
 
     fn retire_preview(&self, next: Option<Arc<Sound>>) {
@@ -215,10 +218,11 @@ impl Real {
     }
 
     /// Dropped (queue full, or no audio running) commands are freed here, on the UI thread.
-    fn send(&self, command: Command) {
-        if let Some(tx) = lock(&self.shared.commands).as_mut() {
-            let _ = tx.push(command);
-        }
+    /// True if it was queued.
+    fn send(&self, command: Command) -> bool {
+        lock(&self.shared.commands)
+            .as_mut()
+            .is_some_and(|tx| tx.push(command).is_ok())
     }
 
     pub fn status(&self) -> Status {
