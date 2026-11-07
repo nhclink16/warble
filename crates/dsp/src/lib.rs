@@ -73,42 +73,42 @@ impl Preset {
 
 /// The whole voice path: one preallocated effect chain per preset, with click-free
 /// crossfades when the preset changes or the effect is switched on or off.
+///
+/// PLACEHOLDER: passes audio through unchanged. Replace with the real chains.
 pub struct Voice {
-    _todo: (),
+    preset: Preset,
+    enabled: bool,
 }
 
 impl Voice {
     /// Allocates every chain up front for `sample_rate` (Hz, e.g. 48000.0).
     pub fn new(sample_rate: f32) -> Voice {
         let _ = sample_rate;
-        todo!("warble-dsp: Voice::new")
+        Voice { preset: Preset::Normal, enabled: true }
     }
 
     /// Switch preset. Real-time safe. Starts a short (~20 ms) crossfade from the old chain to
     /// the new one, whose state is reset first so it never replays stale audio.
     pub fn set_preset(&mut self, preset: Preset) {
-        let _ = preset;
-        todo!("warble-dsp: Voice::set_preset")
+        self.preset = preset;
     }
 
     pub fn preset(&self) -> Preset {
-        todo!("warble-dsp: Voice::preset")
+        self.preset
     }
 
     /// `false` passes the dry voice. Real-time safe, crossfaded like a preset change.
     pub fn set_enabled(&mut self, enabled: bool) {
-        let _ = enabled;
-        todo!("warble-dsp: Voice::set_enabled")
+        self.enabled = enabled;
     }
 
     pub fn enabled(&self) -> bool {
-        todo!("warble-dsp: Voice::enabled")
+        self.enabled
     }
 
     /// Process `buf` in place. Any length, including 0. Output stays finite and within
     /// [-1.0, 1.0] for input within [-1.0, 1.0].
     pub fn process(&mut self, buf: &mut [f32]) {
         let _ = buf;
-        todo!("warble-dsp: Voice::process")
     }
 }
