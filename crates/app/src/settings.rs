@@ -25,6 +25,8 @@ pub struct Settings {
     pub sound_volume: f32,
     /// Soundboard clips in your headphones too (separate from `monitor`, your voice).
     pub hear_sounds: bool,
+    /// The user's own Freesound API key; empty searches Myinstants only.
+    pub freesound_key: String,
 }
 
 impl Default for Settings {
@@ -40,6 +42,7 @@ impl Default for Settings {
             monitor_volume: 0.8,
             sound_volume: 0.8,
             hear_sounds: true,
+            freesound_key: String::new(),
         }
     }
 }
@@ -116,33 +119,38 @@ pub fn list_sounds(dir: &Path) -> Vec<PathBuf> {
 }
 
 /// Copies `src` into `dir` under its own name, or "name (2).ext" and so on when that's taken.
-/// The name is claimed by creating the file, so two imports at once never share one.
 pub fn copy_in(src: &Path, dir: &Path) -> std::io::Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
     let mut input = std::fs::File::open(src)?;
-    let stem = sound_name(src);
-    let ext = src
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let mut dest = dir.join(src.file_name().unwrap_or_default());
-    let mut n = 2;
-    let mut output = loop {
-        match std::fs::File::create_new(&dest) {
-            Ok(f) => break f,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                dest = dir.join(format!("{stem} ({n}).{ext}"));
-                n += 1;
-            }
-            Err(e) => return Err(e),
-        }
-    };
+    let (mut output, dest) = create_in(dir, src.file_name().unwrap_or_default().as_ref())?;
     if let Err(e) = std::io::copy(&mut input, &mut output) {
         drop(output);
         let _ = std::fs::remove_file(&dest);
         return Err(e);
     }
     Ok(dest)
+}
+
+/// A new, empty file in `dir` named `name`, or "stem (2).ext" and so on when that's taken. The
+/// name is claimed by creating the file, so two imports at once never share one.
+pub fn create_in(dir: &Path, name: &Path) -> std::io::Result<(std::fs::File, PathBuf)> {
+    std::fs::create_dir_all(dir)?;
+    let stem = sound_name(name);
+    let ext = name
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut dest = dir.join(name);
+    let mut n = 2;
+    loop {
+        match std::fs::File::create_new(&dest) {
+            Ok(f) => return Ok((f, dest)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                dest = dir.join(format!("{stem} ({n}).{ext}"));
+                n += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// Deletes the app's copy of a sound. Only files directly inside `dir` are ever removed, so a
