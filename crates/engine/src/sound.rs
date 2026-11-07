@@ -1,5 +1,5 @@
-//! Soundboard clip decoding (symphonia): any WAV, MP3, OGG/Vorbis or FLAC file to mono `f32`
-//! at the file's own sample rate. Runs on the caller's thread.
+//! Soundboard clip decoding (symphonia): any WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC) file to
+//! mono `f32` at the file's own sample rate. Runs on the caller's thread.
 
 use std::fs::File;
 use std::io::ErrorKind;
@@ -18,6 +18,11 @@ use crate::graph::Sound;
 pub(crate) const MAX_SECONDS: u64 = 5 * 60;
 
 pub(crate) fn decode(path: &Path) -> Result<Sound, String> {
+    decode_capped(path, MAX_SECONDS)
+}
+
+/// `decode`, refusing clips longer than `max_seconds` (a whole number of minutes).
+pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, String> {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -90,9 +95,10 @@ pub(crate) fn decode(path: &Path) -> Result<Sound, String> {
                 *out += s * scale;
             }
         }
-        if samples.len() as u64 > MAX_SECONDS * rate as u64 {
+        if samples.len() as u64 > max_seconds * rate as u64 {
             return Err(format!(
-                "{name} is longer than 5 minutes. Pick a shorter clip."
+                "{name} is longer than {} minutes. Pick a shorter clip.",
+                max_seconds / 60
             ));
         }
     }

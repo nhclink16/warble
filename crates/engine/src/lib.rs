@@ -30,9 +30,10 @@ mod device;
 mod graph;
 mod sound;
 
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::Ordering::Relaxed;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// One audio device as the OS names it. The name is also its id in settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,6 +92,41 @@ pub struct Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SoundId(pub u32);
 
+/// A decoded clip in memory, mono at its own sample rate: what the trim editor shows and what a
+/// preview plays. Cheap to clone.
+#[derive(Clone)]
+pub struct Clip(Arc<graph::Sound>);
+
+impl Clip {
+    pub fn new(samples: Vec<f32>, rate: u32) -> Clip {
+        Clip(Arc::new(graph::Sound {
+            samples,
+            rate: rate.max(1),
+        }))
+    }
+
+    /// Decode a file as `Engine::load_sound` does, refusing clips longer than `max_seconds`
+    /// (a whole number of minutes). Runs on the caller's thread.
+    pub fn decode(path: &Path, max_seconds: u64) -> Result<Clip, String> {
+        sound::decode_capped(path, max_seconds).map(|s| Clip(Arc::new(s)))
+    }
+
+    pub fn samples(&self) -> &[f32] {
+        &self.0.samples
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.0.rate
+    }
+
+    pub fn seconds(&self) -> f64 {
+        self.0.samples.len() as f64 / self.0.rate as f64
+    }
+}
+
+/// The longest clip `Engine::load_sound` takes, in seconds.
+pub const MAX_SOUND_SECONDS: u64 = sound::MAX_SECONDS;
+
 /// A cheap snapshot for the UI, safe to call every frame.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
@@ -106,6 +142,8 @@ pub struct Status {
     pub output_level: f32,
     /// Sounds playing right now.
     pub playing: Vec<SoundId>,
+    /// While a preview plays: where it is in its clip, in the clip's samples.
+    pub preview: Option<usize>,
     /// Times an output callback ran short of mic audio since start (diagnostics).
     pub underruns: u64,
 }
@@ -212,7 +250,7 @@ impl Engine {
         }
     }
 
-    /// Decode a WAV, MP3, OGG/Vorbis or FLAC file into memory. Runs on the caller's thread.
+    /// Decode a WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC) file into memory. Runs on the caller's thread.
     /// Errors are plain English ("Couldn't read clip.mp3: unsupported format").
     /// Clips longer than 5 minutes are refused. The mock accepts any path without reading it.
     pub fn load_sound(&self, path: &Path) -> Result<SoundId, String> {
@@ -254,6 +292,24 @@ impl Engine {
         }
     }
 
+    /// Play samples `range` of `clip` in the headphones only, never into the call, whatever
+    /// "hear sounds" says. It replaces any preview already playing. Silent with no headphones.
+    pub fn preview(&self, clip: &Clip, range: Range<usize>) {
+        let end = range.end.min(clip.samples().len());
+        let start = range.start.min(end);
+        match &self.inner {
+            Inner::Mock(m) => lock(m).preview = Some((start, end, clip.rate(), 0)),
+            Inner::Real(r) => r.preview(clip.0.clone(), start, end),
+        }
+    }
+
+    pub fn stop_preview(&self) {
+        match &self.inner {
+            Inner::Mock(m) => lock(m).preview = None,
+            Inner::Real(r) => r.stop_preview(),
+        }
+    }
+
     pub fn status(&self) -> Status {
         match &self.inner {
             Inner::Mock(m) => lock(m).status(),
@@ -279,6 +335,8 @@ mod mock {
         pub hear_sounds: bool,
         pub next_sound: u32,
         pub playing: Vec<(SoundId, u32)>,
+        /// (start, end, rate, status() calls since it started).
+        pub preview: Option<(usize, usize, u32, u32)>,
         tick: u32,
     }
 
@@ -295,6 +353,7 @@ mod mock {
                 hear_sounds: true,
                 next_sound: 0,
                 playing: Vec::new(),
+                preview: None,
                 tick: 0,
             }
         }
@@ -325,6 +384,17 @@ mod mock {
                 *left = left.saturating_sub(1);
             }
             self.playing.retain(|(_, left)| *left > 0);
+            // A preview moves at real speed, counting 30 status() calls a second.
+            let mut preview = None;
+            if let Some((start, end, rate, ticks)) = &mut self.preview {
+                let at = *start + (*ticks as u64 * *rate as u64 / 30) as usize;
+                *ticks += 1;
+                if at < *end {
+                    preview = Some(at);
+                } else {
+                    self.preview = None;
+                }
+            }
             let t = self.tick as f32 * 0.21;
             // A talking-voice shape: two slow sines, clipped to silence between "words".
             let voice =
@@ -346,6 +416,7 @@ mod mock {
                 input_level: voice,
                 output_level: (voice * 0.9 + sounds).min(1.0),
                 playing: self.playing.iter().map(|(id, _)| *id).collect(),
+                preview,
                 underruns: 0,
             }
         }
@@ -469,6 +540,27 @@ mod tests {
         });
         assert!(engine.status().playing.is_empty());
         drop(engine); // joins the device thread
+    }
+
+    #[test]
+    fn previews_start_play_and_stop() {
+        let engine = Engine::mock();
+        let clip = Clip::new(vec![0.1; 3000], 3000);
+        engine.preview(&clip, 1500..9999);
+        assert_eq!(engine.status().preview, Some(1500));
+        assert_eq!(engine.status().preview, Some(1600));
+        engine.stop_preview();
+        assert_eq!(engine.status().preview, None);
+        assert!(
+            engine.status().playing.is_empty(),
+            "a preview isn't a soundboard sound"
+        );
+
+        // The real engine takes them with no devices too.
+        let engine = Engine::start(nowhere());
+        engine.preview(&clip, 0..3000);
+        engine.stop_preview();
+        assert_eq!(engine.status().preview, None);
     }
 
     #[test]

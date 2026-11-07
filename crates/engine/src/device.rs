@@ -110,6 +110,8 @@ enum Msg {
 struct Library {
     last_id: u32,
     sounds: HashMap<SoundId, Arc<Sound>>,
+    /// The clip last sent to preview, kept so the audio side never holds its last reference.
+    preview: Option<Arc<Sound>>,
     /// Removed sounds the audio side may still hold. Dropped here, never on the audio thread,
     /// once ours is the last reference.
     retired: Vec<Arc<Sound>>,
@@ -195,6 +197,23 @@ impl Real {
         self.send(Command::StopAll);
     }
 
+    pub fn preview(&self, sound: Arc<Sound>, start: usize, end: usize) {
+        self.retire_preview(Some(sound.clone()));
+        self.send(Command::Preview(sound, start, end));
+    }
+
+    pub fn stop_preview(&self) {
+        self.retire_preview(None);
+        self.send(Command::StopPreview);
+    }
+
+    fn retire_preview(&self, next: Option<Arc<Sound>>) {
+        let mut library = lock(&self.library);
+        if let Some(old) = std::mem::replace(&mut library.preview, next) {
+            library.retired.push(old);
+        }
+    }
+
     /// Dropped (queue full, or no audio running) commands are freed here, on the UI thread.
     fn send(&self, command: Command) {
         if let Some(tx) = lock(&self.shared.commands).as_mut() {
@@ -222,6 +241,7 @@ impl Real {
             input_level: c.input_level.load(),
             output_level: c.output_level.load(),
             playing: c.playing(),
+            preview: c.preview_at(),
             underruns: c.underruns.load(Relaxed),
         }
     }

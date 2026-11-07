@@ -72,6 +72,8 @@ pub(crate) struct Controls {
     pub underruns: AtomicU64,
     /// The sound in each soundboard voice, 0 for none (sound ids start at 1).
     playing: [AtomicU32; POOL],
+    /// Where the headphone preview is in its clip, in the clip's samples, plus one; 0 for none.
+    preview_at: AtomicU64,
 }
 
 impl Default for Controls {
@@ -89,6 +91,7 @@ impl Default for Controls {
             output_level: AtomicF32::new(0.0),
             underruns: AtomicU64::new(0),
             playing: std::array::from_fn(|_| AtomicU32::new(0)),
+            preview_at: AtomicU64::new(0),
         }
     }
 }
@@ -138,6 +141,14 @@ impl Controls {
             .collect()
     }
 
+    /// Where the headphone preview is in its clip, while one plays.
+    pub fn preview_at(&self) -> Option<usize> {
+        match self.preview_at.load(Relaxed) {
+            0 => None,
+            at => Some(at as usize - 1),
+        }
+    }
+
     /// Zero the meters and playing flags while no graph is running.
     pub fn clear_outputs(&self) {
         self.input_level.store(0.0);
@@ -145,6 +156,7 @@ impl Controls {
         for p in &self.playing {
             p.store(0, Relaxed);
         }
+        self.preview_at.store(0, Relaxed);
     }
 }
 
@@ -160,6 +172,9 @@ pub(crate) enum Command {
     Play(SoundId, Arc<Sound>),
     Stop(SoundId),
     StopAll,
+    /// Play samples `start..end` of a clip in the headphones only, never into the call.
+    Preview(Arc<Sound>, usize, usize),
+    StopPreview,
 }
 
 /// What the writer tells the reader besides the samples (f64s as bits).
@@ -396,6 +411,40 @@ struct Playing {
     started: u64,
 }
 
+/// Add `sound` from `*pos` up to sample `end`, resampled to `rate` and times `volume`, into
+/// `out`. True once it has reached `end`.
+fn render(
+    sound: &Sound,
+    pos: &mut f64,
+    end: usize,
+    out: &mut [f32],
+    rate: f32,
+    volume: f32,
+) -> bool {
+    let samples = &sound.samples[..end.min(sound.samples.len())];
+    let len = samples.len();
+    let at = |i: usize| samples.get(i).copied().unwrap_or(0.0);
+    let step = sound.rate as f64 / rate as f64;
+    for o in out.iter_mut() {
+        let i = *pos as usize;
+        if i >= len {
+            break;
+        }
+        let t = (*pos - i as f64) as f32;
+        let before = if i == 0 { 0.0 } else { at(i - 1) };
+        *o += volume * cubic([before, at(i), at(i + 1), at(i + 2)], t);
+        *pos += step;
+    }
+    *pos as usize >= len
+}
+
+/// The one clip playing in the headphones only (a search result or a trim selection).
+struct Preview {
+    sound: Arc<Sound>,
+    pos: f64,
+    end: usize,
+}
+
 /// A fixed pool of soundboard voices, each resampling its clip on the fly.
 pub(crate) struct Soundboard {
     slots: [Option<Playing>; POOL],
@@ -442,6 +491,8 @@ impl Soundboard {
                 }
             }
             Command::StopAll => self.slots = std::array::from_fn(|_| None),
+            // The graph plays previews itself.
+            Command::Preview(..) | Command::StopPreview => {}
         }
     }
 
@@ -449,21 +500,7 @@ impl Soundboard {
     pub fn mix(&mut self, out: &mut [f32], rate: f32, volume: f32) {
         for slot in &mut self.slots {
             let Some(p) = slot else { continue };
-            let samples = &p.sound.samples;
-            let len = samples.len();
-            let at = |i: usize| samples.get(i).copied().unwrap_or(0.0);
-            let step = p.sound.rate as f64 / rate as f64;
-            for o in out.iter_mut() {
-                let i = p.pos as usize;
-                if i >= len {
-                    break;
-                }
-                let t = (p.pos - i as f64) as f32;
-                let before = if i == 0 { 0.0 } else { at(i - 1) };
-                *o += volume * cubic([before, at(i), at(i + 1), at(i + 2)], t);
-                p.pos += step;
-            }
-            if p.pos as usize >= len {
+            if render(&p.sound, &mut p.pos, usize::MAX, out, rate, volume) {
                 *slot = None;
             }
         }
@@ -472,7 +509,8 @@ impl Soundboard {
 
 /// Mic → gain → voice effect → + soundboard → soft limit → out (the call). The headphones get
 /// their own mix: the voice only while "hear yourself" is on, the soundboard while "hear sounds"
-/// is on. It goes to the monitor ring, or to `out` when the master is the monitor (no cable).
+/// is on, and a preview always. It goes to the monitor ring, or to `out` when the master is the
+/// monitor (no cable).
 pub(crate) struct Graph {
     rate: f32,
     controls: Arc<Controls>,
@@ -483,6 +521,7 @@ pub(crate) struct Graph {
     preset: Preset,
     effect_enabled: bool,
     board: Soundboard,
+    preview: Option<Preview>,
     master_is_monitor: bool,
     /// The soundboard alone, then the headphone mix; `MAX_BLOCK` long, allocated up front.
     sounds: Vec<f32>,
@@ -523,6 +562,7 @@ impl Graph {
             preset,
             effect_enabled,
             board: Soundboard::default(),
+            preview: None,
             master_is_monitor,
             sounds: vec![0.0; MAX_BLOCK],
             heard: vec![0.0; MAX_BLOCK],
@@ -542,7 +582,17 @@ impl Graph {
     pub fn process(&mut self, out: &mut [f32], now: f64) {
         self.callback(out.len());
         while let Ok(command) = self.commands.pop() {
-            self.board.apply(command);
+            match command {
+                Command::Preview(sound, start, end) => {
+                    self.preview = Some(Preview {
+                        sound,
+                        pos: start as f64,
+                        end,
+                    })
+                }
+                Command::StopPreview => self.preview = None,
+                command => self.board.apply(command),
+            }
         }
         let c = &*self.controls;
         let preset = c.preset();
@@ -586,6 +636,12 @@ impl Graph {
             let output_peak = peak(block);
             if to_headphones {
                 ramp(sounds, &mut self.heard_sounds, heard_sounds);
+                // The call already has its mix, so the preview reaches the headphones only.
+                if let Some(p) = &mut self.preview
+                    && render(&p.sound, &mut p.pos, p.end, sounds, self.rate, sound_volume)
+                {
+                    self.preview = None;
+                }
                 for (h, x) in heard.iter_mut().zip(sounds.iter()) {
                     *h = soft_limit(*h + x);
                 }
@@ -606,6 +662,11 @@ impl Graph {
         for (flag, slot) in c.playing.iter().zip(&self.board.slots) {
             flag.store(slot.as_ref().map_or(0, |p| p.id.0), Relaxed);
         }
+        if !to_headphones {
+            self.preview = None; // nowhere to hear it
+        }
+        let at = self.preview.as_ref().map_or(0, |p| p.pos as u64 + 1);
+        c.preview_at.store(at, Relaxed);
     }
 
     #[cfg(test)]
@@ -1011,6 +1072,43 @@ mod tests {
             c.monitor_volume.store(0.5);
         };
         assert!(all(render_sound(true, monitor), 0.25));
+    }
+
+    #[test]
+    fn a_preview_reaches_the_headphones_but_never_the_call() {
+        let controls = Arc::new(Controls::default());
+        controls.effect_enabled.store(false, Relaxed);
+        controls.sound_volume.store(1.0);
+        // "Hear sounds" off: a preview plays in the headphones all the same.
+        controls.hear_sounds.store(false, Relaxed);
+        let (mut tx, rx) = RingBuffer::new(64);
+        let (mon_tx, mut mon_rx) = ring(48000, 48000);
+        let mut graph = Graph::new(48000, controls.clone(), rx, None, Some(mon_tx), false);
+        let clip = sound(0.25, 1000, 48000);
+        tx.push(Command::Preview(clip.clone(), 100, 700)).ok();
+        let mut call = vec![0.0; 256];
+        let mut heard = Vec::new();
+        for _ in 0..4 {
+            graph.process(&mut call, 0.0);
+            assert!(call.iter().all(|&s| s == 0.0), "nothing in the call");
+            while let Ok(s) = mon_rx.rx.pop() {
+                heard.push(s);
+            }
+        }
+        // Samples 100..700 play, and nothing after them.
+        assert!(heard[..600].iter().all(|s| (s - 0.25).abs() < 1e-6));
+        assert!(heard[600..].iter().all(|&s| s == 0.0), "stops at the end");
+        assert_eq!(controls.preview_at(), None, "finished");
+        assert!(controls.playing().is_empty(), "not a soundboard voice");
+
+        // It stops on request, and the audio side lets go of the clip.
+        tx.push(Command::Preview(clip.clone(), 0, 1000)).ok();
+        graph.process(&mut call, 0.0);
+        assert_eq!(controls.preview_at(), Some(256));
+        tx.push(Command::StopPreview).ok();
+        graph.process(&mut call, 0.0);
+        assert_eq!(controls.preview_at(), None);
+        assert_eq!(Arc::strong_count(&clip), 1);
     }
 
     #[test]
