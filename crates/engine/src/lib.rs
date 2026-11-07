@@ -63,12 +63,12 @@ pub fn find_virtual_cable(devices: &Devices) -> Option<String> {
 fn pick_cable<'a>(names: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     names
         .filter(|n| is_cable_input(n))
-        .min_by_key(|n| n.to_lowercase().contains("16 ch"))
+        .min_by_key(|n| n.to_lowercase().replace(' ', "").contains("16ch"))
 }
 
-/// VB-CABLE's playback side, whatever its pack calls it: "CABLE Input (VB-Audio Virtual
-/// Cable)" on older ones, "Speakers (VB-Audio Virtual Cable)" and "CABLE In 16 Ch (...)" on
-/// newer ones. Its recording side, "CABLE Output", doesn't count.
+/// VB-CABLE's playback side, whatever Windows calls it: "CABLE Input (VB-Audio Virtual
+/// Cable)", sometimes "Speakers (VB-Audio Virtual Cable)", and the 16-channel twin "CABLE In
+/// 16ch (...)". Its recording side, "CABLE Output", doesn't count.
 fn is_cable_input(name: &str) -> bool {
     let n = name.to_lowercase();
     n.contains("cable input")
@@ -392,9 +392,9 @@ mod tests {
             Some("CABLE Input (VB-Audio Virtual Cable)")
         );
         assert_eq!(find_virtual_cable(&Devices::default()), None);
-        // Pack 46 names its playback side "Speakers", next to a 16-channel twin.
+        // Its playback side can also show as "Speakers", next to a 16-channel twin.
         devices.outputs = vec![
-            info("CABLE In 16 Ch (VB-Audio Virtual Cable)"),
+            info("CABLE In 16ch (VB-Audio Virtual Cable)"),
             info("Speakers (HyperX Cloud III S Wireless)"),
             info("Speakers (VB-Audio Virtual Cable)"),
         ];
@@ -405,7 +405,7 @@ mod tests {
         devices.outputs.pop();
         assert_eq!(
             find_virtual_cable(&devices).as_deref(),
-            Some("CABLE In 16 Ch (VB-Audio Virtual Cable)"),
+            Some("CABLE In 16ch (VB-Audio Virtual Cable)"),
             "the 16-channel side still works when it's the only one"
         );
     }
