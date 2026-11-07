@@ -28,15 +28,22 @@ fn main() {
     if !mock && !first_copy(&handle) {
         return;
     }
+    // The tray icon is added before the event loop starts, because Rune starts its GPU probe
+    // with the loop. Adding it while NVIDIA's driver loads deadlocks on Windows: the driver's
+    // DllMain asks the shell for a known folder, while Shell_NotifyIconW holds that folder lock
+    // and waits for the loader. Once added, the shell has what it needs cached.
+    let tray = if headless {
+        None
+    } else {
+        make_tray(handle.clone())
+    };
     let for_state = handle.clone();
     #[allow(unused_mut)]
     let mut app = app
         .init(move || {
             let mut s = if mock { State::mock() } else { State::load() };
             s.headless = headless;
-            if !headless {
-                s.tray = make_tray(for_state.clone());
-            }
+            s.tray = tray;
             s.handle = Some(for_state);
             s.sync_tray();
             s.load_saved_sounds();
