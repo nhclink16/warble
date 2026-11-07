@@ -24,7 +24,7 @@ use cpal::{
 use rtrb::{Producer, RingBuffer};
 
 use crate::graph::{self, Command, Controls, DriftReader, Graph, RingWriter, Sound};
-use crate::{Config, DeviceInfo, Devices, SoundId, Status, is_cable_input, lock};
+use crate::{Config, DeviceInfo, Devices, SoundId, Status, is_cable_input, lock, pick_cable};
 
 /// How often a failed or incomplete session is retried.
 const RETRY: Duration = Duration::from_secs(2);
@@ -357,13 +357,19 @@ fn resolve(host: &Host, config: &Config) -> Resolved {
     };
     let cable = match &config.cable {
         Some(name) => find(name, true),
-        None => host
-            .output_devices()
-            .into_iter()
-            .flatten()
-            .filter_map(named)
-            .find(|(_, n)| is_cable_input(n))
-            .ok_or_else(|| NO_CABLE.to_string()),
+        None => {
+            let outputs: Vec<_> = host
+                .output_devices()
+                .into_iter()
+                .flatten()
+                .filter_map(named)
+                .collect();
+            let name = pick_cable(outputs.iter().map(|(_, n)| n.as_str())).map(str::to_owned);
+            outputs
+                .into_iter()
+                .find(|(_, n)| Some(n) == name.as_ref())
+                .ok_or_else(|| NO_CABLE.to_string())
+        }
     };
     // Recording from the cable's other end, or monitoring into the cable, would loop the
     // call's audio back on itself. Windows sometimes makes VB-CABLE the default after install.

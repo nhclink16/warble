@@ -53,18 +53,26 @@ pub fn list_devices() -> Devices {
     std::panic::catch_unwind(device::list_devices).unwrap_or_default()
 }
 
-/// The output device a virtual cable exposes, if one is installed: VB-CABLE's
-/// "CABLE Input (VB-Audio Virtual Cable)" (match on "CABLE Input", case-insensitive).
+/// The output device a virtual cable exposes, if one is installed: VB-CABLE's playback side
+/// (see `is_cable_input`), the stereo one ahead of its 16-channel twin.
 pub fn find_virtual_cable(devices: &Devices) -> Option<String> {
-    devices
-        .outputs
-        .iter()
-        .find(|d| is_cable_input(&d.name))
-        .map(|d| d.name.clone())
+    pick_cable(devices.outputs.iter().map(|d| d.name.as_str())).map(str::to_owned)
 }
 
+/// The first cable playback device in `names`, preferring the stereo one.
+fn pick_cable<'a>(names: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    names
+        .filter(|n| is_cable_input(n))
+        .min_by_key(|n| n.to_lowercase().contains("16 ch"))
+}
+
+/// VB-CABLE's playback side, whatever its pack calls it: "CABLE Input (VB-Audio Virtual
+/// Cable)" on older ones, "Speakers (VB-Audio Virtual Cable)" and "CABLE In 16 Ch (...)" on
+/// newer ones. Its recording side, "CABLE Output", doesn't count.
 fn is_cable_input(name: &str) -> bool {
-    name.to_lowercase().contains("cable input")
+    let n = name.to_lowercase();
+    n.contains("cable input")
+        || (n.contains("vb-audio virtual cable") && !n.contains("cable output"))
 }
 
 /// Lock, shrugging off poisoning: every value behind these locks stays valid on its own.
@@ -384,6 +392,22 @@ mod tests {
             Some("CABLE Input (VB-Audio Virtual Cable)")
         );
         assert_eq!(find_virtual_cable(&Devices::default()), None);
+        // Pack 46 names its playback side "Speakers", next to a 16-channel twin.
+        devices.outputs = vec![
+            info("CABLE In 16 Ch (VB-Audio Virtual Cable)"),
+            info("Speakers (HyperX Cloud III S Wireless)"),
+            info("Speakers (VB-Audio Virtual Cable)"),
+        ];
+        assert_eq!(
+            find_virtual_cable(&devices).as_deref(),
+            Some("Speakers (VB-Audio Virtual Cable)")
+        );
+        devices.outputs.pop();
+        assert_eq!(
+            find_virtual_cable(&devices).as_deref(),
+            Some("CABLE In 16 Ch (VB-Audio Virtual Cable)"),
+            "the 16-channel side still works when it's the only one"
+        );
     }
 
     /// Names no machine has, so this behaves like a PC with no audio devices at all.
