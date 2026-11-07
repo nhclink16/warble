@@ -3729,11 +3729,13 @@ dependencies = [
 name = "warble"
 version = "0.1.0"
 dependencies = [
+ "rfd",
  "rune",
  "rune-kit",
  "serde",
  "serde_json",
  "warble-engine",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
