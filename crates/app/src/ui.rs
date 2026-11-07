@@ -12,7 +12,7 @@ use rune_kit::{
 use warble_engine::{DeviceInfo, Preset};
 
 use crate::find_view;
-use crate::settings::AUDIO_EXTS;
+use crate::settings::DROP_EXTS;
 use crate::state::{self, Picker, SEGMENTS, Sound, State, Tab};
 
 pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
@@ -307,7 +307,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(tabs(s, &k))
         .child(body)
         .on_drop_files(|s: &mut State, files, _| s.add_sounds(files.to_vec()))
-        .accepts_extensions(&AUDIO_EXTS)
+        .accepts_extensions(&DROP_EXTS)
         .on_drop_hover(|s: &mut State, over, _| s.drop_hover = over);
     if s.drop_hover {
         root = root.child(drop_overlay(&k));

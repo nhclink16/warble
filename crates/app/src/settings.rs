@@ -7,6 +7,10 @@ use warble_engine::{Config, Preset};
 
 /// The audio files the soundboard takes, by extension (compared without case).
 pub const AUDIO_EXTS: [&str; 4] = ["wav", "mp3", "ogg", "flac"];
+/// Video (and m4a) files: dropped on the window, they open in the trim editor.
+pub const VIDEO_EXTS: [&str; 4] = ["mp4", "m4v", "mov", "m4a"];
+/// Everything the window takes when files are dropped on it.
+pub const DROP_EXTS: [&str; 8] = ["wav", "mp3", "ogg", "flac", "mp4", "m4v", "mov", "m4a"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -91,9 +95,17 @@ pub fn config_dir() -> Option<PathBuf> {
 }
 
 pub fn is_audio(path: &Path) -> bool {
+    has_ext(path, &AUDIO_EXTS)
+}
+
+pub fn is_video(path: &Path) -> bool {
+    has_ext(path, &VIDEO_EXTS)
+}
+
+fn has_ext(path: &Path, exts: &[&str]) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| AUDIO_EXTS.iter().any(|a| a.eq_ignore_ascii_case(e)))
+        .is_some_and(|e| exts.iter().any(|a| a.eq_ignore_ascii_case(e)))
 }
 
 /// A tile's label: the file name without its extension.

@@ -8,10 +8,12 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
 - **Find sounds:** search Myinstants and Freesound from the *Soundboard* tab, preview a result in
   your headphones only, and add it. Freesound needs a free API key (<https://freesound.org/apiv2/apply>),
   pasted once on that page; without one, Warble searches Myinstants only.
-- **From YouTube:** paste a link, then trim out the part you want (or keep it all) and save it as a sound.
+- **From YouTube or X:** paste a link to a video or an X post, then trim out the part you want (or keep it all)
+  and save it as a sound. Posts that need a signed-in X account can't be fetched.
   The first time, Warble downloads [yt-dlp](https://github.com/yt-dlp/yt-dlp) from its GitHub releases
   and lets it update itself once a day after that.
-- **Trim:** any tile's scissors button, or a search result's, opens the same trim editor.
+- **Trim:** any tile's scissors button, or a search result's, opens the same trim editor. So does dropping a
+  video file (MP4, MOV, M4V) or an M4A on the window.
 - **Hear yourself:** listen to your changed voice in your headphones.
 - **Hear sounds:** soundboard clips play in your headphones too (on by default; switch it off on the *Soundboard* tab).
 - **Hotkeys** that work while a game has focus, and a tray icon so it keeps running when the window is closed.

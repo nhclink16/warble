@@ -274,6 +274,11 @@ impl State {
             return;
         };
         let (path, name) = (sound.path.clone(), format!("{} (trimmed)", sound.name));
+        self.trim_file(path, name);
+    }
+
+    /// The trim editor for any file Warble can read: a tile's, or a dropped video.
+    pub fn trim_file(&mut self, path: std::path::PathBuf, name: String) {
         self.off_thread(
             move || Clip::decode(&path, youtube::MAX_SECONDS),
             move |s, clip| match clip {

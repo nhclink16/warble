@@ -1,4 +1,4 @@
-//! Audio from a YouTube link through yt-dlp, which Warble downloads on first use (from its
+//! Audio from a YouTube or X link through yt-dlp, which Warble downloads on first use (from its
 //! official GitHub releases) into its own `bin` folder and keeps up to date. Everything here
 //! blocks, so the app calls it from a worker thread.
 
@@ -81,9 +81,15 @@ fn command(tool: &Path) -> Command {
     cmd
 }
 
-/// What yt-dlp is asked to do: the audio only, m4a when there is one (so no ffmpeg is needed),
-/// one video (not its playlist), at most `MAX_SECONDS` long and not live, saved in `out` under
-/// its id. It prints the saved file's path, then the title.
+/// The download yt-dlp picks, best first: YouTube's m4a audio; an audio-only mp4 stream (X's);
+/// for a post with only whole videos, an mp4 of at most 720p, whose AAC audio Warble reads out
+/// of it; anything else last (Opus, which gets a plain error). None of them needs ffmpeg.
+pub const FORMAT: &str =
+    "bestaudio[ext=m4a]/bestaudio[ext=mp4]/best[ext=mp4][height<=720]/best[ext=mp4]/bestaudio";
+
+/// What yt-dlp is asked to do: the audio (see `FORMAT`) of one video (not its playlist), at most
+/// `MAX_SECONDS` long and not live, saved in `out` under its id. It prints the saved file's
+/// path, then the title.
 pub fn args(url: &str, out: &Path) -> Vec<String> {
     vec![
         "--no-playlist".into(),
@@ -92,7 +98,7 @@ pub fn args(url: &str, out: &Path) -> Vec<String> {
         "--encoding".into(),
         "utf-8".into(),
         "-f".into(),
-        "bestaudio[ext=m4a]/bestaudio".into(),
+        FORMAT.into(),
         "--match-filter".into(),
         format!("duration <= {MAX_SECONDS} & !is_live"),
         "-o".into(),
@@ -114,7 +120,8 @@ pub fn looks_like_link(text: &str) -> bool {
         && !t.contains(char::is_whitespace)
 }
 
-/// Fetches a video's audio into `out`: the file and the video's title.
+/// Fetches a video's audio into `out`: the file and the video's title (without the t.co links
+/// an X post's text carries).
 pub fn fetch(dir: &Path, url: &str, out: &Path) -> Result<(PathBuf, String), String> {
     let _one = RUN.lock().unwrap_or_else(|e| e.into_inner());
     std::fs::create_dir_all(out).map_err(|e| format!("Couldn't save the audio: {e}"))?;
@@ -139,7 +146,17 @@ pub fn fetch(dir: &Path, url: &str, out: &Path) -> Result<(PathBuf, String), Str
         ));
     };
     let file = PathBuf::from(lines[at]);
-    let title = lines.get(at + 1).map_or("YouTube clip", |t| t).to_string();
+    let words: Vec<&str> = lines
+        .get(at + 1)
+        .map_or("", |t| t)
+        .split_whitespace()
+        .filter(|w| !w.starts_with("http"))
+        .collect();
+    let title = if words.is_empty() {
+        "Clip".to_string()
+    } else {
+        words.join(" ")
+    };
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ["webm", "opus"].iter().any(|e| e.eq_ignore_ascii_case(ext)) {
         let _ = std::fs::remove_file(&file);
@@ -156,6 +173,22 @@ fn plain_error(stderr: &str) -> String {
     let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
     if has(&["unsupported url", "is not a valid url"]) {
         "That link isn't a video yt-dlp can get.".into()
+    } else if has(&["no video could be found"]) {
+        "That post has no video.".into()
+    } else if has(&[
+        "nsfw tweet requires authentication",
+        "protected tweet",
+        "you are not authorized",
+    ]) {
+        "That post needs a signed-in X account, so Warble can't get it.".into()
+    } else if has(&["could not retrieve guest token"]) {
+        "X is blocking downloads right now. Try again later.".into()
+    } else if has(&[
+        "requested tweet is unavailable",
+        "tweetunavailable",
+        "no longer exists",
+    ]) {
+        "That post isn't available.".into()
     } else if has(&["private video"]) {
         "That video is private.".into()
     } else if has(&[
@@ -181,7 +214,7 @@ fn plain_error(stderr: &str) -> String {
         "connection",
         "network",
     ]) {
-        "Couldn't reach YouTube. Check your internet.".into()
+        "Couldn't reach the site. Check your internet.".into()
     } else {
         "Couldn't get that video's audio.".into()
     }
@@ -199,7 +232,15 @@ mod tests {
             let i = args.iter().position(|a| a == flag).unwrap();
             args[i + 1].as_str()
         };
-        assert_eq!(after("-f"), "bestaudio[ext=m4a]/bestaudio");
+        assert_eq!(after("-f"), FORMAT);
+        assert!(
+            FORMAT.starts_with("bestaudio[ext=m4a]/"),
+            "YouTube's m4a first"
+        );
+        assert!(
+            FORMAT.contains("/best[ext=mp4]"),
+            "X posts with only whole videos"
+        );
         assert_eq!(after("--match-filter"), "duration <= 1200 & !is_live");
         assert_eq!(after("-o"), out.join("%(id)s.%(ext)s").to_string_lossy());
         assert!(args.contains(&"--no-playlist".to_string()));
@@ -240,6 +281,18 @@ mod tests {
             "That link isn't a video yt-dlp can get."
         );
         assert_eq!(
+            plain_error("ERROR: [twitter] 123: No video could be found in this tweet"),
+            "That post has no video."
+        );
+        assert_eq!(
+            plain_error("ERROR: [twitter] 123: NSFW tweet requires authentication."),
+            "That post needs a signed-in X account, so Warble can't get it."
+        );
+        assert_eq!(
+            plain_error("ERROR: [twitter:broadcast] 1rmx: Broadcast no longer exists"),
+            "That post isn't available."
+        );
+        assert_eq!(
             plain_error("something odd"),
             "Couldn't get that video's audio."
         );
@@ -272,5 +325,44 @@ mod tests {
         let back = warble_engine::Clip::decode(&saved, 300).unwrap();
         assert!((back.seconds() - 2.0).abs() < 0.01, "{}", back.seconds());
         eprintln!("saved {}", saved.display());
+    }
+
+    /// Live: an X post's audio, through `FORMAT` (its audio-only stream), and through the
+    /// whole-video mp4 that posts without one fall back to. `cargo test -p warble -- --ignored
+    /// live_x`. Shares the yt-dlp `live_youtube_fetch_trim_and_save` downloads.
+    #[test]
+    #[ignore = "needs the internet and runs yt-dlp"]
+    fn live_x_post_audio_decodes() {
+        let dir = std::env::temp_dir().join("warble-live-youtube");
+        if !tool_path(&dir).is_file() {
+            install(&dir).expect("installs yt-dlp");
+        }
+        let url = "https://x.com/historyinmemes/status/1790637656616943991";
+        let out = dir.join("out-x");
+        let (file, title) = fetch(&dir, url, &out).expect("fetches");
+        eprintln!("{title}: {}", file.display());
+        assert!(!title.contains("https://"), "{title}");
+        let clip = warble_engine::Clip::decode(&file, MAX_SECONDS).expect("decodes");
+        eprintln!(
+            "audio-only stream: {:.1} s at {} Hz",
+            clip.seconds(),
+            clip.rate()
+        );
+        assert!(clip.seconds() > 10.0);
+
+        let whole = command(&tool_path(&dir))
+            .args(["--no-warnings", "-f", "best[ext=mp4][height<=720]", "-o"])
+            .arg(out.join("whole.%(ext)s"))
+            .args(["--print", "after_move:filepath", "--", url])
+            .output()
+            .unwrap();
+        let path = String::from_utf8_lossy(&whole.stdout).trim().to_string();
+        let video = warble_engine::Clip::decode(Path::new(&path), MAX_SECONDS).expect("decodes");
+        eprintln!(
+            "whole video {path}: {:.1} s at {} Hz",
+            video.seconds(),
+            video.rate()
+        );
+        assert!((video.seconds() - clip.seconds()).abs() < 0.5);
     }
 }

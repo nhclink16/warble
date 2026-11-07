@@ -179,3 +179,20 @@ fn the_trim_editor_plays_in_the_headphones_and_saves_a_new_tile() {
     assert_eq!(bytes.len(), 44 + (32000 - 1600) * 2, "16-bit mono WAV");
     let _ = std::fs::remove_file(&sound.path);
 }
+
+#[test]
+fn a_dropped_video_opens_its_audio_in_the_trim_editor() {
+    let mut rt = app();
+    // One second of a 440 Hz tone under a tiny H.264 picture, the way X and phones save video.
+    let video = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/fixtures/tone-video.mp4"
+    ));
+    rt.drop_files(vec![video], Some((200.0, 300.0)));
+    settle(&mut rt);
+    let t = rt.state.trim.as_ref().expect("the trim editor opens");
+    assert!((t.duration() - 1.0).abs() < 0.1, "{} s", t.duration());
+    assert!(t.clip.samples().iter().any(|v| v.abs() > 0.1), "the tone");
+    assert_eq!(rt.state.find.trim_name.text, "tone-video");
+    assert!(rt.state.sounds.is_empty(), "no tile until it's saved");
+}

@@ -393,7 +393,9 @@ impl State {
     }
 
     /// Copies audio files into the sounds folder and loads them; other files are skipped.
+    /// A video among them (the first, if there are several) opens in the trim editor instead.
     pub fn add_sounds(&mut self, paths: Vec<PathBuf>) {
+        let video = paths.iter().find(|p| settings::is_video(p)).cloned();
         let paths: Vec<PathBuf> = paths
             .into_iter()
             .filter(|p| settings::is_audio(p))
@@ -401,6 +403,10 @@ impl State {
         if !paths.is_empty() {
             self.set_tab(Tab::Soundboard);
             self.load_paths(paths, true);
+        }
+        if let Some(video) = video {
+            let name = settings::sound_name(&video);
+            self.trim_file(video, name);
         }
     }
 

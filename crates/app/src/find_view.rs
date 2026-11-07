@@ -287,8 +287,8 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
 fn youtube_card(f: &Find, k: &Kit) -> El {
     let busy = matches!(f.youtube, YouTube::Installing | YouTube::Fetching);
     let field = TextInput::new(&f.link)
-        .placeholder("Paste a YouTube link")
-        .label("YouTube link")
+        .placeholder("Paste a YouTube or X link")
+        .label("YouTube or X link")
         .width(None)
         .disabled(busy)
         .on_edit(|s: &mut State| &mut s.find.link)
@@ -306,8 +306,8 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
         .key("youtube")
         .child(heading(
             k,
-            "From YouTube",
-            "Paste a link, then cut out the part you want or keep it all.",
+            "From YouTube or X",
+            "Paste a link, or drop a video file on the window. Then keep the part you want.",
         ))
         .child(
             row()
@@ -338,8 +338,8 @@ fn install_notice(k: &Kit) -> El {
         .border(1.0, warn().alpha(0.35))
         .child(
             text(format!(
-                "To get audio from YouTube, Warble downloads yt-dlp ({}), a free tool, from its \
-                 official GitHub page. Warble keeps it up to date after that.",
+                "To get audio from YouTube and X, Warble downloads yt-dlp ({}), a free tool, \
+                 from its official GitHub page. Warble keeps it up to date after that.",
                 youtube::TOOL_SIZE
             ))
             .font(SMALL)
