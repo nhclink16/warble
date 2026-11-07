@@ -1,0 +1,8 @@
+[package]
+name = "warble-dsp"
+description = "Real-time voice effects: mono f32 in place, no allocation or locking after construction."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]

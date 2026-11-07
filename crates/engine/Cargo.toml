@@ -1,0 +1,12 @@
+[package]
+name = "warble-engine"
+description = "Warble's audio engine: mic in, voice effects and soundboard, out to a virtual cable and your headphones."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+warble-dsp.workspace = true
+cpal.workspace = true
+rtrb.workspace = true
+symphonia.workspace = true
