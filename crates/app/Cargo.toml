@@ -11,3 +11,9 @@ rune.workspace = true
 rune-kit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# Both already in Rune's Windows build. rfd: the multi-file "Add sounds" picker (Rune's own
+# picks one file). windows-sys: the window and taskbar icon.
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "0.17", default-features = false }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

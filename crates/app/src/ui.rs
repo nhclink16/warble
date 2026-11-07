@@ -1,0 +1,1364 @@
+//! The window: a header with the app's status, three tabs, and a drop zone around them.
+
+use rune::tok::TextStyle;
+use rune::{
+    Align, Color, Cursor, Cx, Drag, El, Icon, Phase, ScrollSpec, Spring, Tx, col, el, icon, oklch,
+    row, text,
+};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, Keybind, Kit, PaletteSeed, SegmentedControl, Select,
+    SelectAppearance, Switch,
+};
+use warble_engine::{DeviceInfo, Preset};
+
+use crate::settings::AUDIO_EXTS;
+use crate::state::{self, Picker, SEGMENTS, Sound, State, Tab};
+
+pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
+
+// --- Look ---
+
+const PAD: f32 = 16.0;
+const GAP: f32 = 12.0;
+const LABEL_W: f32 = 58.0;
+
+const TITLE: TextStyle = TextStyle::new(15.0, 650.0);
+const HEADING: TextStyle = TextStyle::new(13.5, 600.0);
+const BODY: TextStyle = TextStyle::new(12.5, 400.0).lh(18.0);
+const LABEL: TextStyle = TextStyle::new(12.5, 500.0);
+const SMALL: TextStyle = TextStyle::new(11.5, 400.0).lh(16.0);
+const TINY: TextStyle = TextStyle::new(10.5, 500.0);
+const NUMBER: TextStyle = TextStyle::new(12.0, 500.0).features("'tnum' 1");
+
+fn bg() -> Color {
+    oklch(0.165, 0.01, 265.0)
+}
+fn accent() -> Color {
+    oklch(0.80, 0.14, 165.0)
+}
+fn warn() -> Color {
+    oklch(0.83, 0.13, 80.0)
+}
+fn danger() -> Color {
+    oklch(0.70, 0.16, 25.0)
+}
+/// The dark ink drawn on the accent.
+fn ink() -> Color {
+    oklch(0.2, 0.02, 200.0)
+}
+
+pub fn kit() -> Kit {
+    Kit::from_palette(PaletteSeed {
+        bg: bg(),
+        fg: oklch(0.955, 0.005, 265.0),
+        accent: accent(),
+    })
+}
+
+/// `colour` washed over `base`, opaque.
+fn wash(base: Color, colour: Color, amount: f32) -> Color {
+    let (a, b) = (base.to_oklab(), colour.to_oklab());
+    Color::from_oklab(std::array::from_fn(|i| {
+        if i == 3 {
+            1.0
+        } else {
+            a[i] + (b[i] - a[i]) * amount
+        }
+    }))
+}
+
+fn card(k: &Kit) -> El {
+    col()
+        .w_full()
+        .padding(14.0)
+        .gap(GAP)
+        .radius(12.0)
+        .fill(k.c.layer_01)
+        .border(1.0, k.c.border_muted)
+}
+
+fn keys(k: &Kit, chord: &str) -> El {
+    Keybind::new(&state::keycaps(chord)).build(k)
+}
+
+// --- Icons (16-point view boxes) ---
+
+macro_rules! glyph {
+    ($name:ident, $body:expr) => {
+        static $name: Icon = Icon {
+            name: concat!("warble-", stringify!($name)),
+            view: 16.0,
+            body: $body,
+        };
+    };
+}
+macro_rules! stroke {
+    () => {
+        r#"stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none""#
+    };
+}
+
+glyph!(
+    LOGO,
+    r#"<rect x="2.68" y="6.24" width="1.36" height="3.52" rx=".68" fill="currentColor"/><rect x="5" y="4.32" width="1.36" height="7.36" rx=".68" fill="currentColor"/><rect x="7.32" y="2.88" width="1.36" height="10.24" rx=".68" fill="currentColor"/><rect x="9.64" y="4.8" width="1.36" height="6.4" rx=".68" fill="currentColor"/><rect x="11.96" y="6.56" width="1.36" height="2.88" rx=".68" fill="currentColor"/>"#
+);
+glyph!(
+    NORMAL,
+    concat!(
+        r#"<rect x="5.25" y="1.5" width="5.5" height="8.5" rx="2.75" "#,
+        stroke!(),
+        r#"/><path d="M2.75 7.75a5.25 5.25 0 0 0 10.5 0M8 13v1.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    DEEP,
+    concat!(
+        r#"<path d="M1.25 8C3 1.75 6.25 1.75 8 8s5 6.25 6.75 0" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    CHIPMUNK,
+    concat!(
+        r#"<path d="M1.25 8c.75-2.5 1.5-2.5 2.25 0s1.5 2.5 2.25 0 1.5-2.5 2.25 0 1.5 2.5 2.25 0 1.5-2.5 2.25 0 1.5 2.5 2.25 0" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    ROBOT,
+    concat!(
+        r#"<path d="M1.25 10.5h2.5v-5h3v5h3v-5h3v5h1.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    RADIO,
+    concat!(
+        r#"<rect x="4.25" y="5" width="7.5" height="9.5" rx="1.75" "#,
+        stroke!(),
+        r#"/><path d="M6.5 5V1.5M6.75 8.25h2.5M6.75 11h2.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    ECHO,
+    concat!(
+        r#"<circle cx="2.75" cy="8" r="1.4" fill="currentColor"/><path d="M5.5 5a4 4 0 0 1 0 6" "#,
+        stroke!(),
+        r#"/><path d="M8.75 3.25a6.5 6.5 0 0 1 0 9.5" stroke-opacity=".65" "#,
+        stroke!(),
+        r#"/><path d="M12 1.75a8.5 8.5 0 0 1 0 12.5" stroke-opacity=".35" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    DEMON,
+    concat!(
+        r#"<circle cx="8" cy="10" r="4.25" "#,
+        stroke!(),
+        r#"/><path d="M5.3 6.75C4 5.9 3.3 4.4 3.5 2.25M10.7 6.75C12 5.9 12.7 4.4 12.5 2.25" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    CAVE,
+    concat!(
+        r#"<path d="M1.75 14V8.5a6.25 6.25 0 0 1 12.5 0V14M5.5 14v-2.75a2.5 2.5 0 0 1 5 0V14M.75 14h14.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    PLAY,
+    r#"<path d="M5.5 3.75v8.5l7-4.25z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>"#
+);
+glyph!(
+    PLAYING,
+    concat!(
+        r#"<path d="M3 6.5v3M6 3.5v9M9 5v6M12 7v2" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    STOP,
+    r#"<rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor"/>"#
+);
+glyph!(
+    PLUS,
+    concat!(r#"<path d="M8 3.25v9.5M3.25 8h9.5" "#, stroke!(), "/>")
+);
+glyph!(
+    CLOSE,
+    concat!(r#"<path d="M4.5 4.5l7 7M11.5 4.5l-7 7" "#, stroke!(), "/>")
+);
+glyph!(
+    WARNING,
+    concat!(
+        r#"<path d="M8 2.25 14.25 13.25H1.75Z" "#,
+        stroke!(),
+        r#"/><path d="M8 6.5v3" "#,
+        stroke!(),
+        r#"/><circle cx="8" cy="11.4" r=".9" fill="currentColor"/>"#
+    )
+);
+glyph!(
+    SPEAKER,
+    concat!(
+        r#"<path d="M2.25 6h2.5L8.5 3v10L4.75 10h-2.5z" "#,
+        stroke!(),
+        r#"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6.25 6.25 0 0 1 0 9" "#,
+        stroke!(),
+        "/>"
+    )
+);
+glyph!(
+    OPEN,
+    concat!(
+        r#"<path d="M6.5 3.5H3.5v9h9v-3M9.5 3.5h3v3M12.5 3.5 7.5 8.5" "#,
+        stroke!(),
+        "/>"
+    )
+);
+
+fn preset_icon(p: Preset) -> &'static Icon {
+    match p {
+        Preset::Normal => &NORMAL,
+        Preset::Deep => &DEEP,
+        Preset::Chipmunk => &CHIPMUNK,
+        Preset::Robot => &ROBOT,
+        Preset::Radio => &RADIO,
+        Preset::Echo => &ECHO,
+        Preset::Demon => &DEMON,
+        Preset::Cave => &CAVE,
+    }
+}
+
+// --- The window ---
+
+pub fn view(s: &State, cx: &mut Cx<State>) -> El {
+    let k = kit();
+    let mut layer = Vec::new();
+    let body = match s.tab {
+        Tab::Voice => scrolling(voice(s, cx, &k)),
+        Tab::Soundboard => soundboard(s, cx, &k),
+        Tab::Setup => scrolling(setup(s, &k, &mut layer)),
+    };
+    let mut root = col()
+        .key("app")
+        .w_full()
+        .h_full()
+        .fill(k.c.page)
+        .child(header(s, &k))
+        .child(tabs(s, &k))
+        .child(body)
+        .on_drop_files(|s: &mut State, files, _| s.add_sounds(files.to_vec()))
+        .accepts_extensions(&AUDIO_EXTS)
+        .on_drop_hover(|s: &mut State, over, _| s.drop_hover = over);
+    if s.drop_hover {
+        root = root.child(drop_overlay(&k));
+    }
+    rune_kit::root(root, layer)
+}
+
+/// A tab's content in a scroll view, for windows shorter than it.
+fn scrolling(content: El) -> El {
+    col().key("page").grow(1.0).min_h(0.0).child(
+        col()
+            .key("scroll")
+            .grow(1.0)
+            .min_h(0.0)
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .scroll_edge_fade(10.0)
+            .child(content.w_full().px(PAD).pb(PAD).gap(GAP)),
+    )
+}
+
+fn header(s: &State, k: &Kit) -> El {
+    let logo = el()
+        .key("logo")
+        .size(24.0, 24.0)
+        .radius(6.5)
+        .fill(accent())
+        .center()
+        .a11y_hidden()
+        .child(icon(&LOGO, 24.0).color(ink()));
+    row()
+        .key("header")
+        .h(56.0)
+        .px(PAD)
+        .gap(GAP)
+        .center_y()
+        .child(
+            row()
+                .gap(10.0)
+                .center_y()
+                .child(logo)
+                .child(text("Warble").font(TITLE).color(k.c.text_base)),
+        )
+        .child(el().grow(1.0))
+        .child(status_pill(s, k))
+}
+
+fn status_pill(s: &State, k: &Kit) -> El {
+    let (label, colour) = if s.status.running {
+        ("Live".to_string(), accent())
+    } else if s.cable_missing() {
+        ("VB-CABLE missing".to_string(), warn())
+    } else if let Some(e) = &s.status.error {
+        (e.clone(), danger())
+    } else {
+        ("Starting…".to_string(), k.c.text_muted)
+    };
+    let mut pill = row()
+        .key("status")
+        .role("status")
+        .label(label.clone())
+        .h(26.0)
+        .px(10.0)
+        .gap(7.0)
+        .center_y()
+        .shrink()
+        .max_w(230.0)
+        .radius(13.0)
+        .fill(wash(k.c.page, colour, 0.12))
+        .border(1.0, colour.alpha(0.3))
+        .child(el().size(7.0, 7.0).radius(3.5).fill(colour))
+        .child(
+            text(label)
+                .font(LABEL)
+                .color(colour)
+                .truncate()
+                .shrink()
+                .a11y_hidden(),
+        );
+    // A problem's pill takes you to where it's fixed.
+    if !s.status.running && s.tab != Tab::Setup {
+        pill = pill
+            .help("Open Setup")
+            .cursor(Cursor::Pointer)
+            .hover(k.c.hover)
+            .press(k.c.pressed)
+            .on_press(|s: &mut State| s.set_tab(Tab::Setup));
+    }
+    pill
+}
+
+fn tabs(s: &State, k: &Kit) -> El {
+    const TABS: [Tab; 3] = [Tab::Voice, Tab::Soundboard, Tab::Setup];
+    let current = TABS.iter().position(|t| *t == s.tab);
+    row().key("tabs").w_full().px(PAD).pb(14.0).child(
+        SegmentedControl::new(&["Voice", "Soundboard", "Setup"], current)
+            .label("Section")
+            .width(None)
+            .on_pick(|s: &mut State, i, _| s.set_tab(TABS[i]))
+            .build(k),
+    )
+}
+
+fn drop_overlay(k: &Kit) -> El {
+    el().key("drop")
+        .pin(Some(8.0), Some(8.0), Some(8.0), Some(8.0))
+        .radius(14.0)
+        .fill(k.c.page.alpha(0.9))
+        .border(2.0, accent())
+        .border_dash(8.0, 5.0)
+        .center()
+        .inert()
+        .child(
+            col()
+                .gap(10.0)
+                .center()
+                .child(icon(&PLUS, 30.0).color(accent()))
+                .child(
+                    text("Drop to add sounds")
+                        .font(HEADING)
+                        .color(k.c.text_base),
+                ),
+        )
+}
+
+// --- Voice ---
+
+fn voice(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
+    col()
+        .key("voice")
+        .child(effect_card(s, k))
+        .child(preset_grid(s, k))
+        .child(levels_card(s, cx, k))
+        .child(monitor_card(s, cx, k))
+}
+
+fn effect_card(s: &State, k: &Kit) -> El {
+    let on = s.settings.effect;
+    let detail = if on {
+        format!("{} voice", s.settings.preset().name())
+    } else {
+        "Off: people hear your own voice".to_string()
+    };
+    let switch = Switch::new(on)
+        .label("Voice effect")
+        .hide_label()
+        .control_size(ControlSize::Regular)
+        .on_toggle(|s: &mut State| s.set_effect(!s.settings.effect))
+        .build(k)
+        .key("effect-switch");
+    row()
+        .key("effect")
+        .w_full()
+        .h(70.0)
+        .pl(16.0)
+        .pr(14.0)
+        .gap(GAP)
+        .center_y()
+        .radius(12.0)
+        .fill(if on {
+            wash(k.c.layer_01, accent(), 0.09)
+        } else {
+            k.c.layer_01
+        })
+        .border(
+            1.0,
+            if on {
+                accent().alpha(0.4)
+            } else {
+                k.c.border_muted
+            },
+        )
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .on_press(|s: &mut State| s.set_effect(!s.settings.effect))
+        .child(
+            col()
+                .grow(1.0)
+                .shrink()
+                .gap(6.0)
+                .child(text("Voice effect").font(HEADING).color(k.c.text_base))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .center_y()
+                        .child(keys(k, state::EFFECT_KEY))
+                        .child(
+                            text(detail)
+                                .font(SMALL)
+                                .color(if on { k.c.text_muted } else { k.c.text_faint })
+                                .truncate()
+                                .shrink(),
+                        ),
+                ),
+        )
+        .child(switch)
+}
+
+fn preset_grid(s: &State, k: &Kit) -> El {
+    let (on, current) = (s.settings.effect, s.settings.preset());
+    let mut grid = el()
+        .key("presets")
+        .w_full()
+        .equal_columns(4)
+        .gaps(8.0, 8.0)
+        .role("radiogroup")
+        .label("Voice preset");
+    for (i, p) in Preset::ALL.into_iter().enumerate() {
+        grid = grid.child(preset_tile(k, p, i, p == current, on));
+    }
+    if on { grid } else { grid.dim(0.6) }
+}
+
+fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
+    let lit = selected && on;
+    let (fill, border, glyph) = match (selected, on) {
+        (true, true) => (wash(k.c.layer_01, accent(), 0.16), accent(), accent()),
+        (true, false) => (k.c.layer_02, k.c.border_strong, k.c.text_base),
+        _ => (k.c.layer_01, k.c.border_muted, k.c.icon_muted),
+    };
+    let mut tile = col()
+        .key(format!("preset-{}", p.id()))
+        .role("radio")
+        .label(p.name())
+        .checked(selected)
+        .focusable(true)
+        .h(78.0)
+        .gap(5.0)
+        .center()
+        .radius(10.0)
+        .fill(fill)
+        .border(if selected { 1.5 } else { 1.0 }, border)
+        .on_press(move |s: &mut State| s.select_preset(p))
+        .child(icon(preset_icon(p), 20.0).color(glyph).mb(1.0))
+        .child(
+            text(p.name())
+                .font(if selected {
+                    TextStyle::new(12.5, 620.0)
+                } else {
+                    LABEL
+                })
+                .color(if selected {
+                    k.c.text_base
+                } else {
+                    k.c.text_muted
+                })
+                .truncate(),
+        )
+        .child(
+            text(state::keycaps(&state::preset_key(i)).join("+"))
+                .font(TINY)
+                .color(if lit {
+                    accent().alpha(0.85)
+                } else {
+                    k.c.text_faint
+                })
+                .truncate(),
+        );
+    if !selected {
+        tile = tile.hover(k.c.hover).press(k.c.pressed);
+    }
+    tile
+}
+
+fn levels_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
+    let gain = s.settings.mic_gain;
+    card(k)
+        .key("levels")
+        .child(meter_row(k, "Mic", "mic-meter", &s.meters.mic))
+        .child(meter_row(k, "Output", "out-meter", &s.meters.out))
+        .child(slider(
+            k,
+            cx,
+            Slider {
+                key: "mic-gain",
+                label: "Mic gain",
+                pos: gain_pos(gain),
+                value: format!("{:.0}%", gain * 100.0),
+                enabled: true,
+                get: |s| gain_pos(s.settings.mic_gain),
+                set: |s, p| s.set_mic_gain(pos_gain(p)),
+            },
+        ))
+}
+
+/// Mic gain runs 25%..400% with 100% in the middle of the slider.
+fn gain_pos(gain: f32) -> f32 {
+    (gain.log(4.0) + 1.0) / 2.0
+}
+fn pos_gain(pos: f32) -> f32 {
+    let g = 4f32.powf(pos * 2.0 - 1.0);
+    // Snap to 100% near the middle, where most people want it.
+    if (g - 1.0).abs() < 0.04 { 1.0 } else { g }
+}
+
+fn meter_row(k: &Kit, label: &str, key: &str, segments: &[rune::Live<f32>]) -> El {
+    let mut bar = row().key(key).grow(1.0).h(10.0).gap(2.0).a11y_hidden();
+    for (i, live) in segments.iter().enumerate() {
+        let at = i as f32 / SEGMENTS as f32;
+        let colour = if at >= 0.9 {
+            danger()
+        } else if at >= 0.75 {
+            warn()
+        } else {
+            accent()
+        };
+        bar = bar.child(
+            el().grow(1.0)
+                .h_full()
+                .radius(1.5)
+                .fill(colour)
+                .live_opacity(live.smooth(Spring::new(0.09, 0.0))),
+        );
+    }
+    row()
+        .w_full()
+        .h(20.0)
+        .gap(GAP)
+        .center_y()
+        .child(text(label).font(LABEL).color(k.c.text_muted).w(LABEL_W))
+        .child(bar)
+        .child(el().w(40.0))
+}
+
+fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
+    let on = s.settings.monitor;
+    card(k)
+        .key("monitor")
+        .child(
+            row()
+                .w_full()
+                .gap(10.0)
+                .center_y()
+                .child(
+                    col()
+                        .grow(1.0)
+                        .shrink()
+                        .gap(6.0)
+                        .child(text("Hear yourself").font(HEADING).color(k.c.text_base))
+                        .child(
+                            row()
+                                .gap(8.0)
+                                .center_y()
+                                .child(keys(k, state::MONITOR_KEY))
+                                .child(
+                                    text("How you sound in the call")
+                                        .font(SMALL)
+                                        .color(k.c.text_muted)
+                                        .truncate()
+                                        .shrink(),
+                                ),
+                        ),
+                )
+                .child(
+                    Switch::new(on)
+                        .label("Hear yourself")
+                        .hide_label()
+                        .control_size(ControlSize::Small)
+                        .on_toggle(|s: &mut State| s.set_monitor(!s.settings.monitor))
+                        .build(k)
+                        .key("monitor-switch"),
+                ),
+        )
+        .child(slider(
+            k,
+            cx,
+            Slider {
+                key: "monitor-volume",
+                label: "Volume",
+                pos: s.settings.monitor_volume,
+                value: format!("{:.0}%", s.settings.monitor_volume * 100.0),
+                enabled: on,
+                get: |s| s.settings.monitor_volume,
+                set: State::set_monitor_volume,
+            },
+        ))
+}
+
+struct Slider {
+    key: &'static str,
+    label: &'static str,
+    /// 0..=1 along the track.
+    pos: f32,
+    value: String,
+    enabled: bool,
+    get: fn(&State) -> f32,
+    set: fn(&mut State, f32),
+}
+
+/// A labelled slider with its value at the end; drag, click the track, or use the arrow keys.
+fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
+    let (h, knob, bar) = (20.0, 14.0, 4.0);
+    let w = cx.layout_size(sl.key).map_or(200.0, |s| s[0]);
+    let pos = sl.pos.clamp(0.0, 1.0);
+    let travel = (w - knob).max(0.0);
+    let (get, set) = (sl.get, sl.set);
+    let to_pos = move |x: f32, w: f32| ((x - knob / 2.0) / (w - knob).max(1.0)).clamp(0.0, 1.0);
+    let grabbed = move |x: f32, at: f32, w: f32| {
+        (x - (knob / 2.0 + at * (w - knob))).abs() <= knob / 2.0 + 2.0
+    };
+    let track = el()
+        .key(sl.key)
+        .role("slider")
+        .label(sl.label)
+        .a11y_value(sl.value.clone())
+        .range_value(f64::from(pos), 0.0, 1.0)
+        .range_step(0.05)
+        .focusable(true)
+        .focus_ring(2.0, 2.0, k.c.border_focus)
+        .grow(1.0)
+        .h(h)
+        .cursor(Cursor::Pointer)
+        .on_step(move |s: &mut State, steps, _| {
+            set(s, (get(s) + steps as f32 * 0.05).clamp(0.0, 1.0))
+        })
+        .on_drag(
+            move |s: &mut State, d: &mut Drag, tx: &mut Tx| match d.phase {
+                Phase::Down => {
+                    d.data = get(s);
+                    if !grabbed(d.x, d.data, d.w) {
+                        set(s, to_pos(d.x, d.w));
+                    }
+                }
+                Phase::Move => {
+                    let knob_x = knob / 2.0 + d.data * (d.w - knob);
+                    let grab = if grabbed(d.start_x, d.data, d.w) {
+                        d.start_x - knob_x
+                    } else {
+                        0.0
+                    };
+                    set(s, to_pos(d.x - grab, d.w));
+                    tx.instant();
+                }
+                Phase::Up => {
+                    if d.cancelled() {
+                        set(s, d.data);
+                    }
+                }
+            },
+        )
+        .child(
+            el().absolute(0.0, (h - bar) / 2.0)
+                .size(w, bar)
+                .radius(bar / 2.0)
+                .fill(k.c.layer_03),
+        )
+        .child(
+            el().absolute(0.0, (h - bar) / 2.0)
+                .size(knob / 2.0 + pos * travel, bar)
+                .radius(bar / 2.0)
+                .fill(if sl.enabled { accent() } else { k.c.text_faint }),
+        )
+        .child(
+            el().absolute(pos * travel, (h - knob) / 2.0)
+                .size(knob, knob)
+                .radius(knob / 2.0)
+                .fill(oklch(0.97, 0.0, 0.0))
+                .shadow(1.0, 3.0, Color::BLACK.alpha(0.45)),
+        );
+    let line = row()
+        .w_full()
+        .h(22.0)
+        .gap(GAP)
+        .center_y()
+        .child(
+            text(sl.label)
+                .font(LABEL)
+                .color(k.c.text_muted)
+                .w(LABEL_W)
+                .a11y_hidden(),
+        )
+        .child(track)
+        .child(
+            text(sl.value)
+                .font(NUMBER)
+                .color(k.c.text_muted)
+                .w(40.0)
+                .align(Align::End)
+                .a11y_hidden(),
+        );
+    if sl.enabled { line } else { line.dim(0.55) }
+}
+
+// --- Soundboard ---
+
+fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
+    if s.sounds.is_empty() {
+        return col()
+            .key("soundboard")
+            .grow(1.0)
+            .min_h(0.0)
+            .px(PAD)
+            .pb(PAD)
+            .gap(GAP)
+            .children(notice(s, k))
+            .child(empty_state(k));
+    }
+    let any_playing = !s.status.playing.is_empty();
+    let toolbar = row()
+        .key("sound-tools")
+        .w_full()
+        .gap(8.0)
+        .center_y()
+        .child(add_button(k))
+        .child(el().grow(1.0))
+        .child(
+            Button::new("Stop all")
+                .icon(&STOP)
+                .shortcut(state::STOP_KEY)
+                .disabled(!any_playing)
+                .on_press(|s: &mut State| s.stop_sounds())
+                .build(k)
+                .key("stop-all"),
+        );
+    let mut grid = el().key("sounds").w_full().equal_columns(3).gaps(8.0, 8.0);
+    for (i, sound) in s.sounds.iter().enumerate() {
+        grid = grid.child(sound_tile(s, k, i, sound));
+    }
+    let volume = slider(
+        k,
+        cx,
+        Slider {
+            key: "sound-volume",
+            label: "Volume",
+            pos: s.settings.sound_volume,
+            value: format!("{:.0}%", s.settings.sound_volume * 100.0),
+            enabled: true,
+            get: |s| s.settings.sound_volume,
+            set: State::set_sound_volume,
+        },
+    );
+    col()
+        .key("soundboard")
+        .grow(1.0)
+        .min_h(0.0)
+        .child(
+            col()
+                .w_full()
+                .px(PAD)
+                .pb(10.0)
+                .gap(10.0)
+                .child(toolbar)
+                .children(notice(s, k)),
+        )
+        .child(scrolling(col().child(grid)))
+        .child(el().w_full().h(1.0).fill(k.c.border_muted))
+        .child(
+            row()
+                .key("sound-footer")
+                .w_full()
+                .px(PAD)
+                .py(12.0)
+                .fill(k.c.layer_01)
+                .child(volume),
+        )
+}
+
+fn add_button(k: &Kit) -> El {
+    Button::new("Add sounds…")
+        .icon(&PLUS)
+        .variant(ButtonVariant::Submit)
+        .on_press_tx(|s: &mut State, tx| s.pick_sounds(tx))
+        .build(k)
+        .key("add-sounds")
+}
+
+fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
+    let (id, playing) = (sound.id, s.is_playing(sound.id));
+    let hotkey = if i < 9 {
+        state::keycaps(&state::sound_key(i)).join("+")
+    } else {
+        String::new()
+    };
+    let remove = el()
+        .key(format!("remove-{}", id.0))
+        .role("button")
+        .label(format!("Remove {}", sound.name))
+        .help("Remove")
+        .pin(None, Some(5.0), Some(5.0), None)
+        .size(20.0, 20.0)
+        .radius(10.0)
+        .center()
+        .fill(k.c.layer_03)
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .group_opacity(0.0, 1.0)
+        .on_press(move |s: &mut State| s.remove_sound(id))
+        .child(icon(&CLOSE, 12.0).color(k.c.icon_base));
+    col()
+        .key(format!("sound-{}", id.0))
+        .role("button")
+        .label(if playing {
+            format!("Play {} (playing)", sound.name)
+        } else {
+            format!("Play {}", sound.name)
+        })
+        .focusable(true)
+        .h(72.0)
+        .pt(9.0)
+        .pb(8.0)
+        .px(10.0)
+        .radius(10.0)
+        .fill(if playing {
+            wash(k.c.layer_01, accent(), 0.16)
+        } else {
+            k.c.layer_01
+        })
+        .border(
+            if playing { 1.5 } else { 1.0 },
+            if playing { accent() } else { k.c.border_muted },
+        )
+        .hover_group()
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .on_press(move |s: &mut State| s.play(id))
+        .justify_between()
+        .child(
+            text(sound.name.clone())
+                .font(LABEL)
+                .color(k.c.text_base)
+                .max_lines(2)
+                .w_full()
+                .pr(14.0)
+                .a11y_hidden(),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(6.0)
+                .center_y()
+                .child(
+                    text(hotkey)
+                        .font(TINY)
+                        .color(if playing {
+                            accent().alpha(0.85)
+                        } else {
+                            k.c.text_faint
+                        })
+                        .grow(1.0)
+                        .shrink()
+                        .truncate(),
+                )
+                .child(
+                    icon(if playing { &PLAYING } else { &PLAY }, 13.0).color(if playing {
+                        accent()
+                    } else {
+                        k.c.icon_faint
+                    }),
+                ),
+        )
+        .child(remove)
+}
+
+fn empty_state(k: &Kit) -> El {
+    col()
+        .key("empty")
+        .w_full()
+        .grow(1.0)
+        .gap(10.0)
+        .center()
+        .px(24.0)
+        .radius(14.0)
+        .border(1.5, k.c.border_muted)
+        .border_dash(6.0, 5.0)
+        .child(
+            el().size(52.0, 52.0)
+                .radius(26.0)
+                .fill(k.c.layer_02)
+                .center()
+                .mb(4.0)
+                .child(icon(&SPEAKER, 24.0).color(k.c.icon_muted)),
+        )
+        .child(text("No sounds yet").font(HEADING).color(k.c.text_base))
+        .child(
+            text("Add WAV, MP3, OGG or FLAC files, or drop them anywhere on this window.")
+                .font(BODY)
+                .color(k.c.text_muted)
+                .align(Align::Center)
+                .wrap()
+                .max_w(250.0),
+        )
+        .child(el().h(6.0))
+        .child(add_button(k))
+        .child(
+            text("The first nine play with Ctrl+Shift+1 to 9.")
+                .font(SMALL)
+                .color(k.c.text_faint)
+                .mt(4.0),
+        )
+}
+
+/// A dismissable line about something that went wrong, such as a file that didn't load.
+fn notice(s: &State, k: &Kit) -> Option<El> {
+    let message = s.notice.clone()?;
+    Some(
+        row()
+            .key("notice")
+            .w_full()
+            .pl(12.0)
+            .pr(6.0)
+            .py(8.0)
+            .gap(8.0)
+            .items_start()
+            .radius(10.0)
+            .fill(wash(k.c.page, danger(), 0.12))
+            .border(1.0, danger().alpha(0.35))
+            .child(icon(&WARNING, 15.0).color(danger()).mt(2.0))
+            .child(
+                text(message)
+                    .font(SMALL)
+                    .color(k.c.text_base)
+                    .wrap()
+                    .grow(1.0)
+                    .shrink()
+                    .mt(1.0),
+            )
+            .child(
+                el().key("dismiss-notice")
+                    .role("button")
+                    .label("Dismiss")
+                    .size(20.0, 20.0)
+                    .radius(5.0)
+                    .center()
+                    .hover(k.c.hover)
+                    .press(k.c.pressed)
+                    .on_press(|s: &mut State| s.notice = None)
+                    .child(icon(&CLOSE, 12.0).color(k.c.icon_muted)),
+            ),
+    )
+}
+
+// --- Setup ---
+
+fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
+    let mut page = col().key("setup");
+    if s.cable_missing() {
+        page = page.child(cable_callout(k));
+    }
+    page.child(devices_card(s, k, layer))
+        .child(discord_card(k))
+        .child(hotkeys_card(s, k))
+}
+
+fn cable_callout(k: &Kit) -> El {
+    col()
+        .key("cable-callout")
+        .w_full()
+        .padding(14.0)
+        .gap(10.0)
+        .radius(12.0)
+        .fill(wash(k.c.page, warn(), 0.1))
+        .border(1.0, warn().alpha(0.4))
+        .child(
+            row()
+                .gap(8.0)
+                .center_y()
+                .child(icon(&WARNING, 16.0).color(warn()))
+                .child(text("VB-CABLE isn’t installed").font(HEADING).color(k.c.text_base)),
+        )
+        .child(
+            text(
+                "Warble sends your voice to Discord and games through VB-CABLE, a free virtual audio cable. \
+                 Install it, restart your PC, then open Warble again.",
+            )
+            .font(BODY)
+            .color(k.c.text_muted)
+            .wrap(),
+        )
+        .child(
+            row().child(
+                Button::new("Get VB-CABLE")
+                    .icon(&OPEN)
+                    .variant(ButtonVariant::Submit)
+                    .on_press_tx(|s: &mut State, tx| {
+                        if let Err(e) = tx.open_url(VB_CABLE_URL) {
+                            s.notice = Some(format!("Couldn’t open the browser: {e}"));
+                        }
+                    })
+                    .build(k)
+                    .key("get-cable"),
+            ),
+        )
+}
+
+fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
+    let st = &s.status;
+    let mut c = card(k)
+        .key("devices")
+        .gap(14.0)
+        .child(text("Devices").font(HEADING).color(k.c.text_base))
+        .child(picker(
+            s,
+            k,
+            layer,
+            Picker::Input,
+            "Microphone",
+            "System default",
+            &s.devices.inputs,
+            st.input_name.as_deref(),
+        ))
+        .child(picker(
+            s,
+            k,
+            layer,
+            Picker::Cable,
+            "Call output (VB-CABLE)",
+            "Auto-detect VB-CABLE",
+            &s.devices.outputs,
+            st.cable_name.as_deref(),
+        ))
+        .child(picker(
+            s,
+            k,
+            layer,
+            Picker::Headphones,
+            "Headphones",
+            "System default",
+            &s.devices.outputs,
+            st.monitor_name.as_deref(),
+        ));
+    if let Some(e) = st.error.as_ref().filter(|_| !s.cable_missing()) {
+        c = c.child(
+            row()
+                .gap(8.0)
+                .items_start()
+                .child(icon(&WARNING, 14.0).color(danger()).mt(1.0))
+                .child(
+                    text(e.clone())
+                        .font(SMALL)
+                        .color(danger())
+                        .wrap()
+                        .grow(1.0)
+                        .shrink(),
+                ),
+        );
+    }
+    c
+}
+
+#[allow(clippy::too_many_arguments)]
+fn picker(
+    s: &State,
+    k: &Kit,
+    layer: &mut Vec<El>,
+    which: Picker,
+    label: &'static str,
+    default: &'static str,
+    devices: &[DeviceInfo],
+    using: Option<&str>,
+) -> El {
+    let chosen = match which {
+        Picker::Input => &s.settings.input,
+        Picker::Cable => &s.settings.cable,
+        Picker::Headphones => &s.settings.headphones,
+    };
+    let mut names = vec![default.to_string()];
+    names.extend(devices.iter().map(|d| d.name.clone()));
+    // A saved device that's unplugged still shows as the choice.
+    if let Some(c) = chosen
+        && !names.contains(c)
+    {
+        names.push(c.clone());
+    }
+    let key = match which {
+        Picker::Input => "pick-input",
+        Picker::Cable => "pick-cable",
+        Picker::Headphones => "pick-headphones",
+    };
+    let select = Select::new(key, &names)
+        .label(label)
+        .current(Some(chosen.as_deref().unwrap_or(default)))
+        .appearance(SelectAppearance::Field)
+        .open(s.open_picker == Some(which))
+        .on_toggle(move |s: &mut State| {
+            s.open_picker = if s.open_picker == Some(which) {
+                None
+            } else {
+                Some(which)
+            }
+        })
+        .on_close(|s: &mut State| s.open_picker = None)
+        .on_choose(move |s: &mut State, v: &str, _| {
+            s.set_device(which, (v != default).then(|| v.to_string()))
+        })
+        .build(k, layer)
+        .w_full();
+    // With the default chosen, say which device that is.
+    let using = using.filter(|_| chosen.is_none()).map(|u| {
+        text(format!("Using {u}"))
+            .font(SMALL)
+            .color(k.c.text_faint)
+            .truncate()
+    });
+    col()
+        .w_full()
+        .gap(6.0)
+        .child(text(label).font(LABEL).color(k.c.text_muted))
+        .child(select)
+        .children(using)
+}
+
+fn discord_card(k: &Kit) -> El {
+    let step = |n: &str, line: &str| {
+        row()
+            .w_full()
+            .gap(10.0)
+            .items_start()
+            .child(
+                el().size(18.0, 18.0)
+                    .radius(9.0)
+                    .fill(k.c.layer_03)
+                    .center()
+                    .a11y_hidden()
+                    .child(text(n.to_string()).font(TINY).color(k.c.text_base)),
+            )
+            .child(
+                text(line.to_string())
+                    .font(BODY)
+                    .color(k.c.text_base)
+                    .wrap()
+                    .grow(1.0)
+                    .shrink(),
+            )
+    };
+    card(k)
+        .key("discord")
+        .child(text("Set up Discord").font(HEADING).color(k.c.text_base))
+        .child(step("1", "Open Settings > Voice & Video."))
+        .child(step("2", "Set Input device to “CABLE Output (VB-Audio Virtual Cable)”."))
+        .child(step("3", "Turn off Noise suppression (Krisp) and Echo cancellation, or Discord strips the effects out."))
+        .child(
+            row()
+                .w_full()
+                .pt(4.0)
+                .child(
+                    text("In games, pick “CABLE Output” as the mic in the game’s voice chat settings.")
+                        .font(SMALL)
+                        .color(k.c.text_muted)
+                        .wrap()
+                        .grow(1.0)
+                        .shrink(),
+                ),
+        )
+}
+
+fn hotkeys_card(s: &State, k: &Kit) -> El {
+    let presets: Vec<String> = (0..8).map(state::preset_key).collect();
+    let sounds: Vec<String> = (0..9).map(state::sound_key).collect();
+    let rows: [(&str, Vec<String>, Vec<String>); 5] = [
+        (
+            "Voice effect on or off",
+            vec![state::EFFECT_KEY.into()],
+            state::keycaps(state::EFFECT_KEY),
+        ),
+        (
+            "Pick a preset",
+            presets,
+            vec!["Ctrl".into(), "Alt".into(), "1–8".into()],
+        ),
+        (
+            "Hear yourself on or off",
+            vec![state::MONITOR_KEY.into()],
+            state::keycaps(state::MONITOR_KEY),
+        ),
+        (
+            "Stop sounds",
+            vec![state::STOP_KEY.into()],
+            state::keycaps(state::STOP_KEY),
+        ),
+        (
+            "Play sounds 1–9",
+            sounds,
+            vec!["Ctrl".into(), "Shift".into(), "1–9".into()],
+        ),
+    ];
+    let mut c = card(k).key("hotkeys").gap(10.0).child(
+        col()
+            .gap(3.0)
+            .child(text("Hotkeys").font(HEADING).color(k.c.text_base))
+            .child(
+                text("These work while you’re in a game or call.")
+                    .font(SMALL)
+                    .color(k.c.text_muted),
+            ),
+    );
+    for (what, chords, caps) in rows {
+        let failed: Vec<&(String, String)> = s
+            .hotkey_failures
+            .iter()
+            .filter(|(c, _)| chords.contains(c))
+            .collect();
+        let mut line = col().w_full().gap(4.0).child(
+            row()
+                .w_full()
+                .h(20.0)
+                .gap(8.0)
+                .center_y()
+                .child(
+                    text(what)
+                        .font(BODY)
+                        .color(if failed.is_empty() {
+                            k.c.text_base
+                        } else {
+                            k.c.text_muted
+                        })
+                        .grow(1.0)
+                        .shrink()
+                        .truncate(),
+                )
+                .child(Keybind::new(&caps).build(k)),
+        );
+        if let Some((_, why)) = failed.first() {
+            let which: Vec<String> = failed
+                .iter()
+                .map(|(c, _)| state::keycaps(c).join("+"))
+                .collect();
+            line = line.child(
+                row()
+                    .gap(6.0)
+                    .items_start()
+                    .child(icon(&WARNING, 13.0).color(danger()).mt(1.0))
+                    .child(
+                        text(format!("{} didn’t work: {why}.", which.join(", ")))
+                            .font(SMALL)
+                            .color(danger())
+                            .wrap()
+                            .grow(1.0)
+                            .shrink(),
+                    ),
+            );
+        }
+        c = c.child(line);
+    }
+    c
+}
+
+// --- Scenes for headless snapshots ---
+
+type Scene = (&'static str, fn(&mut State));
+
+pub const SCENES: &[Scene] = &[
+    ("voice", |s| s.select_preset(Preset::Deep)),
+    ("voice-off", |s| {
+        s.select_preset(Preset::Robot);
+        s.set_effect(false);
+    }),
+    ("soundboard", |s| {
+        s.add_sounds(
+            [
+                "Air horn.mp3",
+                "Bruh.wav",
+                "Sad trombone.ogg",
+                "Victory fanfare (extended stadium remix).mp3",
+                "Wilhelm scream.flac",
+                "Ba dum tss.wav",
+                "Crowd goes absolutely wild after the last-second winning goal.mp3",
+            ]
+            .map(std::path::PathBuf::from)
+            .to_vec(),
+        );
+        let id = s
+            .sounds
+            .iter()
+            .find(|x| x.name == "Sad trombone")
+            .map(|x| x.id);
+        if let Some(id) = id {
+            s.play(id);
+        }
+    }),
+    ("soundboard-empty", |s| s.set_tab(Tab::Soundboard)),
+    ("setup", |s| s.set_tab(Tab::Setup)),
+    ("no-cable", |s| {
+        s.set_tab(Tab::Setup);
+        s.sim_no_cable = true;
+        s.devices.inputs.retain(|d| !d.name.contains("CABLE"));
+        s.devices.outputs.retain(|d| !d.name.contains("CABLE"));
+        s.refresh_status();
+    }),
+    // Not asked for, but worth a look: a hotkey another app holds, and a file dragged over.
+    ("hotkeys-failed", |s| {
+        s.set_tab(Tab::Setup);
+        s.hotkey_failures = vec![
+            (state::EFFECT_KEY.into(), "taken by another app".into()),
+            (state::sound_key(0), "taken by another app".into()),
+            (state::sound_key(1), "taken by another app".into()),
+        ];
+    }),
+    ("drop", |s| s.drop_hover = true),
+    ("load-error", |s| {
+        s.add_sounds(
+            ["Air horn.mp3", "Bruh.wav"]
+                .map(std::path::PathBuf::from)
+                .to_vec(),
+        );
+        s.notice = Some(
+            "Couldn’t read Broken clip.mp3: it isn’t a supported audio file (and 2 more)".into(),
+        );
+    }),
+];
