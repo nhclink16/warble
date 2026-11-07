@@ -97,6 +97,68 @@ pub fn set_window_icon(window: &rune::WindowHandle) {
 
 #[cfg(test)]
 mod tests {
+    /// An .ico of uncompressed 32-bit images, one per size (each under 256).
+    fn ico(sizes: &[u32]) -> Vec<u8> {
+        let images: Vec<Vec<u8>> = sizes
+            .iter()
+            .map(|&size| {
+                let mut img = Vec::new();
+                let mask = size.div_ceil(32) * 4 * size;
+                for v in [
+                    40,
+                    size,
+                    2 * size,
+                    32 << 16 | 1,
+                    0,
+                    size * size * 4 + mask,
+                    0,
+                    0,
+                    0,
+                    0,
+                ] {
+                    img.extend_from_slice(&v.to_le_bytes());
+                }
+                let px = super::rgba(size);
+                for row in px.chunks(size as usize * 4).rev() {
+                    for p in row.chunks(4) {
+                        img.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+                    }
+                }
+                img.resize(img.len() + mask as usize, 0);
+                img
+            })
+            .collect();
+        let mut out = Vec::new();
+        for v in [0u16, 1, sizes.len() as u16] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut offset = 6 + 16 * sizes.len() as u32;
+        for (&size, img) in sizes.iter().zip(&images) {
+            out.extend_from_slice(&[size as u8, size as u8, 0, 0, 1, 0, 32, 0]);
+            out.extend_from_slice(&(img.len() as u32).to_le_bytes());
+            out.extend_from_slice(&offset.to_le_bytes());
+            offset += img.len() as u32;
+        }
+        images.iter().for_each(|img| out.extend_from_slice(img));
+        out
+    }
+
+    /// The icon `scripts/install.ps1` gives the Start menu shortcut, which is what launchers
+    /// show. After changing the drawing, rewrite it with `WARBLE_WRITE_ICO=1 cargo test`.
+    #[test]
+    fn the_ico_file_matches_the_drawing() {
+        let ico = ico(&[16, 24, 32, 48, 64, 128]);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/warble.ico");
+        if std::env::var_os("WARBLE_WRITE_ICO").is_some() {
+            std::fs::write(path, &ico).unwrap();
+        }
+        let saved = std::fs::read(path).unwrap_or_default();
+        assert!(
+            saved == ico,
+            "assets/warble.ico is stale: rerun with WARBLE_WRITE_ICO=1"
+        );
+    }
+
     #[test]
     fn the_icon_is_opaque_inside_clear_at_the_corners_and_has_bars() {
         let px = super::rgba(32);

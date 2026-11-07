@@ -24,6 +24,10 @@ fn main() {
         ..AppSpec::new("Warble", (400.0, 620.0), State::mock, ui::view)
     });
     let handle = app.handle();
+    #[cfg(windows)]
+    if !mock && !first_copy(&handle) {
+        return;
+    }
     let for_state = handle.clone();
     #[allow(unused_mut)]
     let mut app = app
@@ -100,6 +104,42 @@ fn make_tray(handle: AppHandle<State>) -> Option<Tray> {
 fn show(handle: &AppHandle<State>) {
     handle.open();
     handle.wake();
+}
+
+/// One Warble at a time. Launching it again (from Start, a launcher or a shortcut) shows the
+/// running copy's window instead of starting a second engine; this returns false in that
+/// second copy, which then exits.
+#[cfg(windows)]
+fn first_copy(handle: &AppHandle<State>) -> bool {
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, INFINITE, SetEvent, WaitForSingleObject,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ASFW_ANY, AllowSetForegroundWindow};
+
+    let name: Vec<u16> = "Local\\Warble.Show\0".encode_utf16().collect();
+    // SAFETY: a valid NUL-terminated name and no security attributes. The event lives as long
+    // as the process.
+    let event = unsafe { CreateEventW(std::ptr::null(), 0, 0, name.as_ptr()) };
+    if event.is_null() {
+        return true;
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // We were just launched, so we may bring a window forward; let the first copy do it.
+        unsafe {
+            AllowSetForegroundWindow(ASFW_ANY);
+            SetEvent(event);
+        }
+        return false;
+    }
+    let handle = handle.clone();
+    let event = event as usize; // a HANDLE isn't Send, but it's just a number to the kernel
+    std::thread::spawn(move || {
+        while unsafe { WaitForSingleObject(event as _, INFINITE) } == 0 {
+            show(&handle);
+        }
+    });
+    true
 }
 
 type Action = Box<dyn Fn(&mut State) + Send + Sync>;
