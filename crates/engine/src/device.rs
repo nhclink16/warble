@@ -208,7 +208,7 @@ impl Real {
             .retain(|s| Arc::strong_count(s) > 1);
         let info = lock(&self.shared.info).clone();
         let c = &self.shared.controls;
-        let monitor_error = if c.monitor.load(Relaxed) {
+        let monitor_error = if c.monitor_in_use() {
             info.monitor_error
         } else {
             None
@@ -242,8 +242,8 @@ struct Session {
     /// Set by the error callback of any stream the call needs.
     failed: Arc<AtomicBool>,
     /// Set by the side monitor's error callback (when the cable is the master). With
-    /// monitoring off it's left dead, so a headphone or default-speaker change can't cut the
-    /// call; turning monitoring on reopens the session.
+    /// "hear yourself" and "hear sounds" both off it's left dead, so a headphone or
+    /// default-speaker change can't cut the call; turning either on reopens the session.
     monitor_failed: Arc<AtomicBool>,
     /// The devices this session resolved to (input, cable, monitor), to notice new ones.
     names: [Option<String>; 3],
@@ -284,7 +284,7 @@ fn run(mut config: Config, shared: &Shared, rx: Receiver<Msg>, ready: SyncSender
             Err(RecvTimeoutError::Timeout) => {}
         }
         let Some(s) = &session else { continue };
-        let monitor_lost = s.monitor_failed.load(Relaxed) && shared.controls.monitor.load(Relaxed);
+        let monitor_lost = s.monitor_failed.load(Relaxed) && shared.controls.monitor_in_use();
         if s.failed.load(Relaxed) || monitor_lost {
             // Drop the dead streams now; reopen once `next_try` comes round.
             session = None;
@@ -539,7 +539,6 @@ fn open_set(
     master_is_monitor: bool,
 ) -> Result<Set, cpal::Error> {
     let rate = master.config.sample_rate;
-    let controls = shared.controls.clone();
     let (mic_writer, mic_reader) = mic.map(|m| graph::ring(m.config.sample_rate, rate)).unzip();
     let (monitor_writer, monitor_reader) = monitor
         .map(|m| graph::ring(rate, m.config.sample_rate))
@@ -547,28 +546,19 @@ fn open_set(
     let (commands, command_rx) = RingBuffer::new(COMMANDS);
     let mut graph = Graph::new(
         rate,
-        controls.clone(),
+        shared.controls.clone(),
         command_rx,
         mic_reader,
         monitor_writer,
+        master_is_monitor,
     );
     // The clock both ends of each ring read.
     let epoch = Instant::now();
 
-    let master_stream = if master_is_monitor {
-        let controls = controls.clone();
-        let mut gain = 0.0;
-        build_output(master, failed, move |buf, frames| {
-            graph.callback(frames);
-            graph.process(buf, epoch.elapsed().as_secs_f64());
-            graph::ramp(buf, &mut gain, controls.monitor_gain());
-        })
-    } else {
-        build_output(master, failed, move |buf, frames| {
-            graph.callback(frames);
-            graph.process(buf, epoch.elapsed().as_secs_f64())
-        })
-    }?;
+    let master_stream = build_output(master, failed, move |buf, frames| {
+        graph.callback(frames);
+        graph.process(buf, epoch.elapsed().as_secs_f64())
+    })?;
     master_stream.play()?;
     *lock(&shared.commands) = Some(commands);
     let mut streams = vec![master_stream];
@@ -584,7 +574,7 @@ fn open_set(
         None => Ok(()),
     };
     let monitor = match monitor.zip(monitor_reader) {
-        Some((m, reader)) => start(monitor_stream(m, monitor_failed, reader, controls, epoch)),
+        Some((m, reader)) => start(monitor_stream(m, monitor_failed, reader, epoch)),
         None => Ok(()),
     };
     Ok(Set {
@@ -598,14 +588,12 @@ fn monitor_stream(
     endpoint: &Endpoint,
     failed: &Arc<AtomicBool>,
     mut reader: DriftReader,
-    controls: Arc<Controls>,
     epoch: Instant,
 ) -> Result<Stream, cpal::Error> {
-    let mut gain = 0.0;
+    // The graph already applied the headphone gains to what it put in the ring.
     build_output(endpoint, failed, move |buf, frames| {
         reader.callback(frames);
         reader.read(buf, epoch.elapsed().as_secs_f64());
-        graph::ramp(buf, &mut gain, controls.monitor_gain());
     })
 }
 

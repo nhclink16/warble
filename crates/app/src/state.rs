@@ -152,6 +152,7 @@ impl State {
         engine.set_monitor(settings.monitor);
         engine.set_monitor_volume(settings.monitor_volume);
         engine.set_sound_volume(settings.sound_volume);
+        engine.set_hear_sounds(settings.hear_sounds);
         State {
             status: engine.status(),
             devices: engine.devices(),
@@ -306,6 +307,12 @@ impl State {
     pub fn set_sound_volume(&mut self, volume: f32) {
         self.settings.sound_volume = volume.clamp(0.0, 1.0);
         self.engine.set_sound_volume(self.settings.sound_volume);
+        self.changed();
+    }
+
+    pub fn set_hear_sounds(&mut self, on: bool) {
+        self.settings.hear_sounds = on;
+        self.engine.set_hear_sounds(on);
         self.changed();
     }
 

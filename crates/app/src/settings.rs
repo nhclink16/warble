@@ -23,6 +23,8 @@ pub struct Settings {
     pub monitor: bool,
     pub monitor_volume: f32,
     pub sound_volume: f32,
+    /// Soundboard clips in your headphones too (separate from `monitor`, your voice).
+    pub hear_sounds: bool,
 }
 
 impl Default for Settings {
@@ -37,6 +39,7 @@ impl Default for Settings {
             monitor: false,
             monitor_volume: 0.8,
             sound_volume: 0.8,
+            hear_sounds: true,
         }
     }
 }

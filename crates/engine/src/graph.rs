@@ -64,6 +64,8 @@ pub(crate) struct Controls {
     pub monitor: AtomicBool,
     pub monitor_volume: AtomicF32,
     pub sound_volume: AtomicF32,
+    /// Play soundboard clips in the headphones too, apart from "hear yourself".
+    pub hear_sounds: AtomicBool,
     // Audio → UI.
     pub input_level: AtomicF32,
     pub output_level: AtomicF32,
@@ -82,6 +84,7 @@ impl Default for Controls {
             monitor: AtomicBool::new(false),
             monitor_volume: AtomicF32::new(0.8),
             sound_volume: AtomicF32::new(0.8),
+            hear_sounds: AtomicBool::new(true),
             input_level: AtomicF32::new(0.0),
             output_level: AtomicF32::new(0.0),
             underruns: AtomicU64::new(0),
@@ -110,6 +113,20 @@ impl Controls {
         } else {
             0.0
         }
+    }
+
+    /// Gain on the soundboard in the headphones: 1 when "hear sounds" is on, else silence.
+    pub fn hear_sounds_gain(&self) -> f32 {
+        if self.hear_sounds.load(Relaxed) {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Whether anything is meant to come out of the headphones.
+    pub fn monitor_in_use(&self) -> bool {
+        self.monitor.load(Relaxed) || self.hear_sounds.load(Relaxed)
     }
 
     pub fn playing(&self) -> Vec<SoundId> {
@@ -453,7 +470,9 @@ impl Soundboard {
     }
 }
 
-/// Mic → gain → voice effect → + soundboard → soft limit → out, and a copy to the monitor ring.
+/// Mic → gain → voice effect → + soundboard → soft limit → out (the call). The headphones get
+/// their own mix: the voice only while "hear yourself" is on, the soundboard while "hear sounds"
+/// is on. It goes to the monitor ring, or to `out` when the master is the monitor (no cable).
 pub(crate) struct Graph {
     rate: f32,
     controls: Arc<Controls>,
@@ -464,7 +483,14 @@ pub(crate) struct Graph {
     preset: Preset,
     effect_enabled: bool,
     board: Soundboard,
+    master_is_monitor: bool,
+    /// The soundboard alone, then the headphone mix; `MAX_BLOCK` long, allocated up front.
+    sounds: Vec<f32>,
+    heard: Vec<f32>,
     gain: f32,
+    /// Ramped headphone gains for the voice and the soundboard.
+    heard_voice: f32,
+    heard_sounds: f32,
     input_level: f32,
     output_level: f32,
 }
@@ -477,6 +503,7 @@ impl Graph {
         commands: Consumer<Command>,
         mic: Option<DriftReader>,
         monitor: Option<RingWriter>,
+        master_is_monitor: bool,
     ) -> Graph {
         let mut voice = Voice::new(rate as f32);
         let preset = controls.preset();
@@ -486,6 +513,8 @@ impl Graph {
         Graph {
             rate: rate.max(1) as f32,
             gain: controls.mic_gain.load().clamp(0.0, 4.0),
+            heard_voice: controls.monitor_gain(),
+            heard_sounds: controls.hear_sounds_gain(),
             controls,
             commands,
             mic,
@@ -494,6 +523,9 @@ impl Graph {
             preset,
             effect_enabled,
             board: Soundboard::default(),
+            master_is_monitor,
+            sounds: vec![0.0; MAX_BLOCK],
+            heard: vec![0.0; MAX_BLOCK],
             input_level: 0.0,
             output_level: 0.0,
         }
@@ -525,6 +557,8 @@ impl Graph {
         }
         let gain = c.mic_gain.load().clamp(0.0, 4.0);
         let sound_volume = c.sound_volume.load().clamp(0.0, 1.0);
+        let (heard_voice, heard_sounds) = (c.monitor_gain(), c.hear_sounds_gain());
+        let to_headphones = self.monitor.is_some() || self.master_is_monitor;
 
         for block in out.chunks_mut(MAX_BLOCK) {
             match &mut self.mic {
@@ -538,13 +572,29 @@ impl Graph {
             ramp(block, &mut self.gain, gain);
             let input_peak = peak(block);
             self.voice.process(block);
-            self.board.mix(block, self.rate, sound_volume);
-            for s in block.iter_mut() {
-                *s = soft_limit(*s);
+            let n = block.len();
+            let (sounds, heard) = (&mut self.sounds[..n], &mut self.heard[..n]);
+            sounds.fill(0.0);
+            self.board.mix(sounds, self.rate, sound_volume);
+            if to_headphones {
+                heard.copy_from_slice(block);
+                ramp(heard, &mut self.heard_voice, heard_voice);
+            }
+            for (s, x) in block.iter_mut().zip(sounds.iter()) {
+                *s = soft_limit(*s + x);
             }
             let output_peak = peak(block);
-            if let Some(monitor) = &mut self.monitor {
-                monitor.push(block.len(), block.iter().copied(), now);
+            if to_headphones {
+                ramp(sounds, &mut self.heard_sounds, heard_sounds);
+                for (h, x) in heard.iter_mut().zip(sounds.iter()) {
+                    *h = soft_limit(*h + x);
+                }
+                if self.master_is_monitor {
+                    block.copy_from_slice(heard);
+                }
+                if let Some(monitor) = &mut self.monitor {
+                    monitor.push(n, heard.iter().copied(), now);
+                }
             }
             let decay = (-(block.len() as f32) / (self.rate * METER_SECONDS)).exp();
             self.input_level = input_peak.max(self.input_level * decay);
@@ -662,6 +712,8 @@ mod tests {
     ) -> Report {
         let controls = Arc::new(Controls::default());
         controls.effect_enabled.store(false, Relaxed); // dry voice: don't depend on the DSP
+        controls.monitor.store(true, Relaxed); // hear yourself, at full volume
+        controls.monitor_volume.store(1.0);
         let (_cmd_tx, cmd_rx) = RingBuffer::new(8);
         let mut mon_pushed = 0u64; // samples the graph has sent to the monitor ring
         let (mut mic_tx, mic_rx) = ring(mic.0, cable.0);
@@ -672,6 +724,7 @@ mod tests {
             cmd_rx,
             Some(mic_rx),
             Some(mon_tx),
+            false,
         );
 
         let block = |rate: u32| (rate / 100) as usize; // 10 ms device periods, like WASAPI
@@ -920,10 +973,44 @@ mod tests {
         controls.sound_volume.store(1.0);
         let (tx, rx) = RingBuffer::new(64);
         (
-            Graph::new(48000, controls.clone(), rx, None, None),
+            Graph::new(48000, controls.clone(), rx, None, None, false),
             tx,
             controls,
         )
+    }
+
+    /// Play a long 0.25 clip and return the second block (after the gain ramps settle).
+    fn render_sound(master_is_monitor: bool, setup: impl Fn(&Controls)) -> Vec<f32> {
+        let controls = Arc::new(Controls::default());
+        controls.effect_enabled.store(false, Relaxed);
+        controls.sound_volume.store(1.0);
+        setup(&controls);
+        let (mut tx, rx) = RingBuffer::new(64);
+        let mut graph = Graph::new(48000, controls, rx, None, None, master_is_monitor);
+        tx.push(Command::Play(SoundId(1), sound(0.25, 48000, 48000)))
+            .ok();
+        let mut buf = vec![0.0; 256];
+        graph.process(&mut buf, 0.0);
+        graph.process(&mut buf, 0.0);
+        buf
+    }
+
+    #[test]
+    fn sounds_play_in_the_headphones_unless_muted_there() {
+        let all = |buf: Vec<f32>, v: f32| buf.iter().all(|s| (s - v).abs() < 1e-6);
+        // On by default, even with "hear yourself" off.
+        assert!(all(render_sound(true, |_| {}), 0.25));
+        // Muting them in the headphones leaves the headphones silent...
+        let mute = |c: &Controls| c.hear_sounds.store(false, Relaxed);
+        assert!(all(render_sound(true, mute), 0.0));
+        // ...but the call still gets them.
+        assert!(all(render_sound(false, mute), 0.25));
+        // The "hear yourself" volume is for your voice, not the soundboard.
+        let monitor = |c: &Controls| {
+            c.monitor.store(true, Relaxed);
+            c.monitor_volume.store(0.5);
+        };
+        assert!(all(render_sound(true, monitor), 0.25));
     }
 
     #[test]

@@ -794,6 +794,29 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
             set: State::set_sound_volume,
         },
     );
+    let hear = row()
+        .w_full()
+        .h(22.0)
+        .gap(GAP)
+        .center_y()
+        .child(
+            text("Hear sounds in your headphones")
+                .font(LABEL)
+                .color(k.c.text_muted)
+                .grow(1.0)
+                .shrink()
+                .truncate()
+                .a11y_hidden(),
+        )
+        .child(
+            Switch::new(s.settings.hear_sounds)
+                .label("Hear sounds in your headphones")
+                .hide_label()
+                .control_size(ControlSize::Small)
+                .on_toggle(|s: &mut State| s.set_hear_sounds(!s.settings.hear_sounds))
+                .build(k)
+                .key("hear-sounds-switch"),
+        );
     col()
         .key("soundboard")
         .grow(1.0)
@@ -810,13 +833,15 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         .child(scrolling(col().child(grid)))
         .child(el().w_full().h(1.0).fill(k.c.border_muted))
         .child(
-            row()
+            col()
                 .key("sound-footer")
                 .w_full()
                 .px(PAD)
                 .py(12.0)
+                .gap(10.0)
                 .fill(k.c.layer_01)
-                .child(volume),
+                .child(volume)
+                .child(hear),
         )
 }
 

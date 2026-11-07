@@ -5,7 +5,8 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
 
 - **Voice effects:** Normal, Deep, Chipmunk, Robot, Radio, Echo, Demon, Cave.
 - **Soundboard:** drop in WAV, MP3, OGG or FLAC clips and play them into the call.
-- **Hear yourself:** listen to exactly what the call hears, in your headphones.
+- **Hear yourself:** listen to your changed voice in your headphones.
+- **Hear sounds:** soundboard clips play in your headphones too (on by default; switch it off on the *Soundboard* tab).
 - **Hotkeys** that work while a game has focus, and a tray icon so it keeps running when the window is closed.
 
 ## Set it up (once per PC)

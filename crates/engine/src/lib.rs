@@ -179,7 +179,7 @@ impl Engine {
         }
     }
 
-    /// Hear yourself: the exact cable mix, sent to the monitor device.
+    /// Hear yourself: your (changed) voice in the monitor device.
     pub fn set_monitor(&self, enabled: bool) {
         match &self.inner {
             Inner::Mock(m) => lock(m).monitor = enabled,
@@ -192,6 +192,15 @@ impl Engine {
         match &self.inner {
             Inner::Mock(m) => lock(m).monitor_volume = volume,
             Inner::Real(r) => r.controls().monitor_volume.store(volume),
+        }
+    }
+
+    /// Hear sounds: soundboard clips in the monitor device as well as the call. On by default,
+    /// and separate from `set_monitor`.
+    pub fn set_hear_sounds(&self, enabled: bool) {
+        match &self.inner {
+            Inner::Mock(m) => lock(m).hear_sounds = enabled,
+            Inner::Real(r) => r.controls().hear_sounds.store(enabled, Relaxed),
         }
     }
 
@@ -267,6 +276,7 @@ mod mock {
         pub monitor: bool,
         pub monitor_volume: f32,
         pub sound_volume: f32,
+        pub hear_sounds: bool,
         pub next_sound: u32,
         pub playing: Vec<(SoundId, u32)>,
         tick: u32,
@@ -282,6 +292,7 @@ mod mock {
                 monitor: false,
                 monitor_volume: 0.8,
                 sound_volume: 0.8,
+                hear_sounds: true,
                 next_sound: 0,
                 playing: Vec::new(),
                 tick: 0,
