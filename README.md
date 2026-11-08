@@ -86,10 +86,17 @@ cargo run -p warble-engine --example selftest -- 10       # engine only: lists d
 WARBLE_MOCK=1 cargo run -p warble -- --snap snaps/voice.png --scene voice   # headless screenshot, fake engine
 ```
 
-Scenes: `voice`, `voice-off`, `soundboard`, `soundboard-empty`, `setup`, `no-cable`, `hotkeys-failed`, `drop`, `load-error`,
-`find-start`, `find`, `find-offline`, `youtube-install`, `trim`, `remote`, `remote-tailscale`, `remote-no-network`,
-`audio-problem` (the microphone can't be opened), `removed` (just after removing a sound, with Undo).
-The Setup tab is taller than the window; add `--size 400x1150` to see all of the remote's card.
+Scenes (`--list-scenes` prints them):
+
+- Voice: `voice` (the effect on), `voice-off`.
+- Soundboard: `soundboard` (one sound playing), `soundboard-empty` (nine empty sockets), `removed` (just after
+  removing a sound, with Undo), `load-error` (three files that didn't load), `drop` (files dragged over the window).
+- Find sounds and Trim: `find-start`, `find`, `find-offline`, `youtube-install`, `trim`.
+- Setup: `setup`, `no-cable`, `hotkeys-failed`, `audio-problem` (the microphone can't be opened), `remote`,
+  `remote-tailscale`, `remote-no-network`.
+
+The window's smallest size is 360x540 (`--size 360x540`). Setup is taller than the window; add
+`--size 400x1150` to see all of the remote's card.
 
 To try the phone page on the mock engine: `cargo test -p warble serve_a_mock_board -- --ignored --nocapture`,
 then open the link it prints.
