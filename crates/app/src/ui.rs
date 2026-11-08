@@ -92,6 +92,14 @@ pub(crate) fn recess() -> Color {
 fn edge() -> Color {
     tone(0.54)
 }
+/// What's on or filled, in graphite: a switch's track when on, a fader's travel.
+fn filled() -> Color {
+    tone(0.55)
+}
+/// The light cap you grab: a fader's, a switch's, a Trim handle's.
+pub(crate) fn cap() -> Color {
+    tone(0.9)
+}
 /// The LED, the one colour that means "going into the call". It lights only for the mic
 /// going out (the Live dot), the voice effect and the chosen voice while it's on, a sound
 /// that's playing, and Stop all while one plays. Nothing that stays on this PC (Trim, a
@@ -125,9 +133,19 @@ pub fn kit() -> Kit {
     // Faint text carries hotkeys and device names, so it has to read: 5.5:1 on a pad.
     k.c.text_faint = oklch(0.68, 0.008, 70.0);
     k.c.icon_faint = k.c.text_faint;
-    // A switch that's on has a dark knob on its lit track, so the knob reads both ways, with
-    // a soft sheen on top rather than a chrome one.
-    k.c.knob_on = face();
+    // A switch reads without colour: its light cap stands left in a dark slot when off and
+    // right on a filled track when on (3.6:1 cap to track, 3.7:1 track to body), with a soft
+    // sheen on top rather than a chrome one.
+    k.c.knob = cap();
+    k.c.knob_on = cap();
+    k.c.layer_04 = recess();
+    k.c.bg_accent = filled();
+    k.elevation.switch_off = vec![Shadow {
+        spread: 1.0,
+        color: edge(),
+        ..Shadow::default()
+    }];
+    k.elevation.switch_on = Vec::new();
     k.c.depth_top = Color::WHITE.alpha(0.22);
     // Fields are slots in the body (see `slot`); menus and lists have the controls' edge.
     k.c.bg_base = recess();
@@ -206,6 +224,12 @@ pub(crate) fn group(k: &Kit) -> El {
     })
 }
 
+/// The first group on a page, right under the tabs: the tray above already marks the edge, so
+/// it has no rule.
+pub(crate) fn first_group() -> El {
+    col().w_full().gap(GAP)
+}
+
 /// Panel lettering, in capitals. The words stay as written for screen readers.
 pub(crate) fn printed(k: &Kit, label: &str) -> El {
     text(label.to_string())
@@ -278,13 +302,16 @@ pub(crate) fn disclosure(
     } else {
         k.glyph.triangle_right
     };
+    // The hover fill reaches past the title on both sides, so the title lines up with the
+    // printed titles around it and still has room inside the fill.
     let trigger = row()
         .key("trigger")
         .role("button")
         .label(title.to_string())
         .expanded(open)
         .focusable(true)
-        .w_full()
+        .mx(-8.0)
+        .px(8.0)
         .h(32.0)
         .gap(6.0)
         .center_y()
@@ -1109,6 +1136,7 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
         .focusable(true)
         .grow(1.0)
         .h(h)
+        .radius(k.radius.sm)
         .cursor(Cursor::Pointer)
         .on_step(move |s: &mut State, steps, _| {
             set(s, (get(s) + steps as f32 * 0.05).clamp(0.0, 1.0))
@@ -1150,14 +1178,14 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
                 .size(knob / 2.0 + pos * travel, bar)
                 .radius(k.radius.xs)
                 // Off, a fader still works: only its fill dims, so its text stays readable.
-                .fill(if sl.enabled { tone(0.62) } else { tone(0.42) }),
+                .fill(if sl.enabled { filled() } else { tone(0.42) }),
         )
         .child(
             el().absolute(pos * travel, 1.0)
                 .size(knob, h - 2.0)
                 .radius(k.radius.xs)
                 .center()
-                .fill(tone(0.84))
+                .fill(cap())
                 .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
                 .border_gradient(1.0, tone(0.96), tone(0.55))
                 .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))
@@ -1271,7 +1299,14 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
                 .child(toolbar)
                 .children(notice(s, k)),
         )
-        .child(scrolling(col().pt(2.0).child(grid)))
+        .child(scrolling(
+            col().pt(2.0).child(grid).child(
+                // The pads print their numbers; this says which keys they are.
+                text("The first nine play with Ctrl+Shift+1 to 9.")
+                    .font(SMALL)
+                    .color(k.c.text_muted),
+            ),
+        ))
         .child(el().w_full().h(1.0).fill(k.c.border_base))
         .child(
             col()
@@ -1460,7 +1495,8 @@ fn empty_state(k: &Kit) -> El {
                             weight: 500.0,
                             ..DIGIT
                         })
-                        .color(tone(0.48)),
+                        // Dim beside a full pad's, but still 4.8:1 in its socket.
+                        .color(tone(0.6)),
                 ),
         );
     }
@@ -1573,8 +1609,11 @@ fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     if s.cable_missing() {
         page = page.child(cable_callout(k));
     }
-    page.children(hotkeys_callout(s, k))
-        .child(devices_card(s, k, layer))
+    let hotkeys = hotkeys_callout(s, k);
+    // Under a callout, the devices take a rule; at the top of the page they don't need one.
+    let first = !s.cable_missing() && hotkeys.is_none();
+    page.children(hotkeys)
+        .child(devices_card(s, k, layer, first))
         .child(remote_view::remote_card(s, k))
         .child(discord_card(s, k))
         .child(hotkeys_card(s, k))
@@ -1648,7 +1687,7 @@ fn cable_callout(k: &Kit) -> El {
         )
 }
 
-fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
+fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
     let st = &s.status;
     // The engine's whole message, under the picker whose device it names, else at the foot.
     let error = st.error.as_deref().filter(|_| !s.cable_missing());
@@ -1661,7 +1700,7 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
                 .label(e.to_string())
         })
     };
-    group(k)
+    if first { first_group() } else { group(k) }
         .key("devices")
         .gap(14.0)
         .child(title_row(k, "Devices"))

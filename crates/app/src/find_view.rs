@@ -14,7 +14,7 @@ use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
     BACK, BODY, CHECK, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
-    SMALL, STOP, TITLE, WARNING, as_key, danger, disclosure, group, notice, readout, recess,
+    SMALL, STOP, TITLE, WARNING, as_key, cap, danger, disclosure, group, notice, readout, recess,
     scrolling, slot, title_row, tone, warn,
 };
 use crate::youtube;
@@ -814,7 +814,7 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
             el().size(10.0, 26.0)
                 .radius(k.radius.xs)
                 .center()
-                .fill(tone(0.84))
+                .fill(cap())
                 .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
                 .border_gradient(1.0, tone(0.96), tone(0.55))
                 .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))

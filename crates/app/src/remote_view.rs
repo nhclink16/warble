@@ -7,7 +7,9 @@ use rune::{Color, El, Tx, col, el, icon, oklch, row, text};
 use rune_kit::{Button, ControlSize, Kit, Switch};
 
 use crate::state::State;
-use crate::ui::{BODY, ICON, SMALL, WARNING, as_key, danger, group, title_row, tray};
+use crate::ui::{
+    BODY, ICON, NUMBER, SMALL, WARNING, as_key, danger, group, problem_line, title_row, tray, warn,
+};
 
 /// How long a copied link, key and all, stays on the clipboard.
 const COPIED_FOR: Duration = Duration::from_secs(2 * 60);
@@ -50,12 +52,8 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
         return c.child(warning(k, problem));
     }
     let Some(address) = r.address() else {
-        return c.child(
-            text("Connect this PC to Wi‑Fi or a network cable, then open this tab again.")
-                .font(BODY)
-                .color(k.c.text_base)
-                .wrap(),
-        );
+        let says = "Connect this PC to Wi‑Fi or a network cable, then open this tab again.";
+        return c.child(problem_line(k, warn(), BODY, says).label(says));
     };
     let link = format!("{address}/#k={}", s.settings.remote_key);
     let network = if r.use_tailscale {
@@ -79,6 +77,8 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                 usize::from(r.use_tailscale),
                 |s, i| s.remote.use_tailscale = i == 1,
             )
+            // A step down from the tabs: a choice within the card, not a page.
+            .h(30.0)
             .key("remote-network"),
         );
     }
@@ -100,7 +100,7 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                     .child(line(network))
                     .child(
                         text(address.trim_start_matches("http://").to_string())
-                            .font(SMALL)
+                            .font(NUMBER)
                             .color(k.c.text_faint)
                             .truncate(),
                     )
