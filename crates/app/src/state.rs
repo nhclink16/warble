@@ -144,6 +144,11 @@ pub struct State {
     pub headless: bool,
     /// The no-cable scene: report VB-CABLE as missing whatever the engine says.
     pub sim_no_cable: bool,
+    /// The audio-problem scene: report this error whatever the engine says.
+    pub sim_error: Option<String>,
+    /// Setup's reference sections, closed until opened (not saved).
+    pub discord_open: bool,
+    pub hotkeys_open: bool,
     pub dialog_open: bool,
     /// The Find sounds page, and the trim editor while it's open (both on the Soundboard tab).
     pub find: Find,
@@ -200,6 +205,9 @@ impl State {
             tray: None,
             headless: false,
             sim_no_cable: false,
+            sim_error: None,
+            discord_open: false,
+            hotkeys_open: false,
             dialog_open: false,
             trim: None,
             remote: Remote::default(),
@@ -296,6 +304,10 @@ impl State {
             st.cable_name = None;
             st.error = Some("VB-CABLE isn’t installed".into());
         }
+        if let Some(e) = &self.sim_error {
+            st.running = false;
+            st.error = Some(e.clone());
+        }
         self.meters.show(st.input_level, st.output_level);
         let old = &self.status;
         let changed = st.running != old.running
@@ -316,6 +328,23 @@ impl State {
             && st.cable_name.is_none()
             && st.error.is_some()
             && self.settings.cable.is_none()
+    }
+
+    /// What the header's status pill says, and its tone: "live", "warn", "danger" or "muted".
+    /// The phone remote shows the same words. A device error's full text is on the Setup tab.
+    pub fn status_label(&self) -> (&'static str, &'static str) {
+        let st = &self.status;
+        if st.running && !self.hotkey_failures.is_empty() {
+            ("Hotkeys blocked", "warn")
+        } else if st.running {
+            ("Live", "live")
+        } else if self.cable_missing() {
+            ("VB-CABLE missing", "warn")
+        } else if st.error.is_some() {
+            ("Audio problem", "danger")
+        } else {
+            ("Starting…", "muted")
+        }
     }
 
     pub fn is_playing(&self, id: SoundId) -> bool {

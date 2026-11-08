@@ -6,8 +6,8 @@ use rune::{
     row, text,
 };
 use rune_kit::{
-    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
-    PaletteSeed, SegmentedControl, Select, SelectAppearance, StateColors, Switch,
+    Button, ButtonVariant, Collapsible, ControlSize, IconButton, IconButtonVariant, Keybind, Kit,
+    MenuItem, PaletteSeed, SegmentedControl, Select, SelectAppearance, StateColors, Switch,
 };
 use warble_engine::{DeviceInfo, Preset};
 
@@ -380,19 +380,22 @@ fn header(s: &State, k: &Kit) -> El {
 }
 
 fn status_pill(s: &State, k: &Kit) -> El {
-    let (label, colour) = if s.status.running {
-        ("Live".to_string(), accent())
-    } else if s.cable_missing() {
-        ("VB-CABLE missing".to_string(), warn())
-    } else if let Some(e) = &s.status.error {
-        (e.clone(), danger())
-    } else {
-        ("Starting…".to_string(), k.c.text_muted)
+    let (label, tone) = s.status_label();
+    let colour = match tone {
+        "live" => accent(),
+        "warn" => warn(),
+        "danger" => danger(),
+        _ => k.c.text_muted,
     };
+    // A device error is too long for the pill: it says "Audio problem" and carries the rest.
+    let error = s.status.error.as_deref().filter(|_| tone == "danger");
     let mut pill = row()
         .key("status")
         .role("status")
-        .label(label.clone())
+        .label(match error {
+            Some(e) => format!("{label}: {e}"),
+            None => label.to_string(),
+        })
         .h(26.0)
         .px(10.0)
         .gap(7.0)
@@ -411,10 +414,13 @@ fn status_pill(s: &State, k: &Kit) -> El {
                 .shrink()
                 .a11y_hidden(),
         );
+    if let Some(e) = error {
+        pill = pill.help(e);
+    }
     // A problem's pill takes you to where it's fixed.
-    if !s.status.running && s.tab != Tab::Setup {
+    if tone != "live" && s.tab != Tab::Setup {
         pill = pill
-            .help("Open Setup")
+            .help(error.unwrap_or("Open Setup"))
             .focusable(true)
             .cursor(Cursor::Pointer)
             .hover(k.c.hover)
@@ -1196,15 +1202,17 @@ fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     if s.cable_missing() {
         page = page.child(cable_callout(k));
     }
-    page.child(devices_card(s, k, layer))
+    page.children(hotkeys_callout(s, k))
+        .child(devices_card(s, k, layer))
         .child(remote_view::remote_card(s, k))
-        .child(discord_card(k))
+        .child(discord_card(s, k))
         .child(hotkeys_card(s, k))
 }
 
-fn cable_callout(k: &Kit) -> El {
+/// The warning box at the top of Setup, as the VB-CABLE one: a title and what to do.
+fn callout(k: &Kit, key: &str, title: &str) -> El {
     col()
-        .key("cable-callout")
+        .key(key)
         .w_full()
         .padding(14.0)
         .gap(10.0)
@@ -1216,8 +1224,33 @@ fn cable_callout(k: &Kit) -> El {
                 .gap(8.0)
                 .center_y()
                 .child(icon(&WARNING, ICON).color(warn()))
-                .child(text("VB-CABLE isn’t installed").font(HEADING).color(k.c.text_base)),
+                .child(text(title.to_string()).font(HEADING).color(k.c.text_base)),
         )
+}
+
+/// Hotkeys that didn't register, one line per reason, where Setup opens.
+fn hotkeys_callout(s: &State, k: &Kit) -> Option<El> {
+    let problems = hotkey_problems(s, None);
+    if problems.is_empty() {
+        return None;
+    }
+    Some(
+        callout(k, "hotkeys-callout", "Some hotkeys don’t work").children(
+            problems.into_iter().map(|says| {
+                col().role("alert").label(says.clone()).w_full().child(
+                    text(says)
+                        .font(BODY)
+                        .color(k.c.text_muted)
+                        .wrap()
+                        .a11y_hidden(),
+                )
+            }),
+        ),
+    )
+}
+
+fn cable_callout(k: &Kit) -> El {
+    callout(k, "cable-callout", "VB-CABLE isn’t installed")
         .child(
             text(
                 "Warble sends your voice to Discord and games through VB-CABLE, a free virtual audio cable. \
@@ -1248,61 +1281,111 @@ fn cable_callout(k: &Kit) -> El {
 
 fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     let st = &s.status;
-    let mut c = card(k)
-        .key("devices")
-        .gap(14.0)
-        .child(text("Devices").font(HEADING).color(k.c.text_base))
-        .child(picker(
-            s,
-            k,
-            layer,
-            Picker::Input,
-            "Microphone",
-            "System default",
-            &s.devices.inputs,
-            st.input_name.as_deref(),
-        ))
-        .child(picker(
-            s,
-            k,
-            layer,
-            Picker::Cable,
-            "Virtual cable",
-            "Auto-detect VB-CABLE",
-            &s.devices.outputs,
-            st.cable_name.as_deref(),
-        ))
-        .child(picker(
-            s,
-            k,
-            layer,
-            Picker::Headphones,
-            "Headphones",
-            "System default",
-            &s.devices.outputs,
-            st.monitor_name.as_deref(),
-        ));
-    if let Some(e) = st.error.as_ref().filter(|_| !s.cable_missing()) {
-        c = c.child(
+    // The engine's whole message, under the picker whose device it names, else at the foot.
+    let error = st.error.as_deref().filter(|_| !s.cable_missing());
+    let at = error.and_then(|e| error_picker(s, e));
+    let error_line = |under: Option<Picker>| {
+        error.filter(|_| at == under).map(|e| {
             row()
                 .key("device-error")
                 .role("alert")
-                .label(e.clone())
+                .label(e.to_string())
+                .w_full()
                 .gap(8.0)
                 .items_start()
                 .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
                 .child(
-                    text(e.clone())
+                    text(e.to_string())
                         .font(SMALL)
                         .color(k.c.text_base)
                         .wrap()
                         .grow(1.0)
                         .shrink()
                         .a11y_hidden(),
-                ),
-        );
+                )
+        })
+    };
+    card(k)
+        .key("devices")
+        .gap(14.0)
+        .child(text("Devices").font(HEADING).color(k.c.text_base))
+        .child(
+            picker(
+                s,
+                k,
+                layer,
+                Picker::Input,
+                "Microphone",
+                "System default",
+                &s.devices.inputs,
+                st.input_name.as_deref(),
+            )
+            .children(error_line(Some(Picker::Input))),
+        )
+        .child(
+            picker(
+                s,
+                k,
+                layer,
+                Picker::Cable,
+                "Virtual cable",
+                "Auto-detect VB-CABLE",
+                &s.devices.outputs,
+                st.cable_name.as_deref(),
+            )
+            .children(error_line(Some(Picker::Cable))),
+        )
+        .child(
+            picker(
+                s,
+                k,
+                layer,
+                Picker::Headphones,
+                "Headphones",
+                "System default",
+                &s.devices.outputs,
+                st.monitor_name.as_deref(),
+            )
+            .children(error_line(Some(Picker::Headphones))),
+        )
+        .children(error_line(None))
+}
+
+/// The picker a device error is about: the one whose device (chosen, or the system default)
+/// the message names.
+fn error_picker(s: &State, e: &str) -> Option<Picker> {
+    fn default(list: &[DeviceInfo]) -> Option<&String> {
+        list.iter().find(|d| d.is_default).map(|d| &d.name)
     }
-    c
+    [
+        (
+            Picker::Input,
+            s.settings.input.as_ref().or(default(&s.devices.inputs)),
+        ),
+        (Picker::Cable, s.settings.cable.as_ref()),
+        (
+            Picker::Headphones,
+            s.settings
+                .headphones
+                .as_ref()
+                .or(default(&s.devices.outputs)),
+        ),
+    ]
+    .into_iter()
+    .find(|(_, name)| name.is_some_and(|n| e.contains(n.as_str())))
+    .map(|(p, _)| p)
+}
+
+/// A reference section of Setup that opens and closes, titled like the cards around it.
+fn section(k: &Kit, title: &str, open: bool, toggle: fn(&mut State), content: El) -> El {
+    let mut heading = k.clone();
+    heading.ty.text_small_medium = HEADING;
+    Collapsible::new(title, open)
+        // Its arrow always shows, so a closed section reads as one that opens.
+        .state(rune_kit::State::Hover)
+        .on_toggle(toggle)
+        .child(content.w_full().pt(6.0))
+        .build(&heading)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1371,7 +1454,7 @@ fn picker(
         .children(using)
 }
 
-fn discord_card(k: &Kit) -> El {
+fn discord_card(s: &State, k: &Kit) -> El {
     let step = |n: &str, line: &str| {
         row()
             .w_full()
@@ -1394,9 +1477,8 @@ fn discord_card(k: &Kit) -> El {
                     .shrink(),
             )
     };
-    card(k)
-        .key("discord")
-        .child(text("Set up Discord").font(HEADING).color(k.c.text_base))
+    let steps = col()
+        .gap(GAP)
         .child(step("1", "Open Settings > Voice & Video."))
         .child(step("2", "Set Input device to “CABLE Output (VB-Audio Virtual Cable)”."))
         .child(step("3", "Turn off Noise suppression (Krisp) and Echo cancellation, or Discord strips the effects out."))
@@ -1412,7 +1494,14 @@ fn discord_card(k: &Kit) -> El {
                         .grow(1.0)
                         .shrink(),
                 ),
-        )
+        );
+    card(k).key("discord").child(section(
+        k,
+        "Set up Discord",
+        s.discord_open,
+        |s| s.discord_open = !s.discord_open,
+        steps,
+    ))
 }
 
 fn hotkeys_card(s: &State, k: &Kit) -> El {
@@ -1445,15 +1534,10 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
             vec!["Ctrl".into(), "Shift".into(), "1–9".into()],
         ),
     ];
-    let mut c = card(k).key("hotkeys").gap(10.0).child(
-        col()
-            .gap(3.0)
-            .child(text("Hotkeys").font(HEADING).color(k.c.text_base))
-            .child(
-                text("These work while you’re in a game or call.")
-                    .font(SMALL)
-                    .color(k.c.text_muted),
-            ),
+    let mut c = col().gap(10.0).child(
+        text("These work while you’re in a game or call.")
+            .font(SMALL)
+            .color(k.c.text_muted),
     );
     for (what, chords, caps) in rows {
         let mut line = col().w_full().gap(4.0).child(
@@ -1472,10 +1556,10 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
                 )
                 .child(Keybind::new(&caps).build(k)),
         );
+        // The callout at the top of Setup is the alert; these lines say it again in place.
         for says in hotkey_problems(s, Some(&chords)) {
             line = line.child(
                 row()
-                    .role("alert")
                     .label(says.clone())
                     .gap(6.0)
                     .items_start()
@@ -1493,7 +1577,13 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
         }
         c = c.child(line);
     }
-    c
+    card(k).key("hotkeys").child(section(
+        k,
+        "Hotkeys",
+        s.hotkeys_open,
+        |s| s.hotkeys_open = !s.hotkeys_open,
+        c,
+    ))
 }
 
 /// The hotkeys that didn't register (those among `chords`, or all of them) as sentences, one
@@ -1576,6 +1666,13 @@ pub const SCENES: &[Scene] = &[
         ];
     }),
     ("drop", |s| s.drop_hover = true),
+    // The engine can't open the chosen mic: the pill says "Audio problem", Setup says why.
+    ("audio-problem", |s| {
+        s.set_tab(Tab::Setup);
+        s.settings.input = Some("Blue Yeti".into());
+        s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
+        s.refresh_status();
+    }),
     ("removed", |s| {
         s.add_sounds(
             [

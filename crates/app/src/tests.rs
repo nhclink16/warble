@@ -431,3 +431,52 @@ fn every_file_that_fails_to_load_is_named() {
     }
     assert!(!notice.contains("more"));
 }
+
+#[test]
+fn blocked_hotkeys_show_in_the_pill_and_it_opens_setup() {
+    let mut rt = app();
+    let taken = crate::why(&rune::ShortcutError::Conflict);
+    rt.update(move |s, _| s.hotkey_failures = vec![(crate::state::STOP_KEY.into(), taken)]);
+    settle(&mut rt);
+    assert_eq!(rt.state.status_label(), ("Hotkeys blocked", "warn"));
+    tap(&mut rt, "status");
+    assert_eq!(rt.state.tab, Tab::Setup);
+    let callout = rt.find("hotkeys-callout").expect("the callout");
+    let devices = rt.find("devices").unwrap();
+    assert!(callout.1 < devices.1, "at the top of Setup");
+}
+
+#[test]
+fn a_device_error_is_short_in_the_pill_and_whole_under_its_picker() {
+    let mut rt = app();
+    let why = "Couldn't open Blue Yeti: another app is using it";
+    rt.update(move |s, _| {
+        s.settings.input = Some("Blue Yeti".into());
+        s.sim_error = Some(why.into());
+        s.refresh_status();
+    });
+    settle(&mut rt);
+    let pill = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("status"));
+    let pill = pill.unwrap();
+    assert_eq!(
+        pill.label.as_deref(),
+        Some(format!("Audio problem: {why}").as_str())
+    );
+    tap(&mut rt, "status");
+    assert_eq!(rt.state.tab, Tab::Setup);
+    let error = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("device-error"));
+    let error = error.expect("the whole message on Setup");
+    assert_eq!((error.role, error.label.as_deref()), ("alert", Some(why)));
+    let (_, mic) = rt.find("pick-input-trigger").unwrap();
+    let (_, cable) = rt.find("pick-cable-trigger").unwrap();
+    assert!(
+        mic < error.rect[1] && error.rect[1] < cable,
+        "under the microphone"
+    );
+}

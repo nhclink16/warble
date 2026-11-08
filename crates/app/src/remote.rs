@@ -229,15 +229,7 @@ impl State {
             YouTube::Idle => ("idle", ""),
         };
         // The same words and colour as the window's status pill.
-        let (status, tone) = if self.status.running {
-            ("Live", "live")
-        } else if self.cable_missing() {
-            ("VB-CABLE missing", "warn")
-        } else if let Some(e) = &self.status.error {
-            (e.as_str(), "danger")
-        } else {
-            ("Starting…", "muted")
-        };
+        let (status, tone) = self.status_label();
         json!({
             "status": {"label": status, "tone": tone},
             "effect": s.effect,
@@ -630,6 +622,25 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_phone_shows_the_pills_words() {
+        let mut s = on();
+        let key = s.settings.remote_key.clone();
+        let status = |s: &mut State| {
+            let (_, json, _) = s.api("GET", "/api/state", &key, b"");
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            (
+                json["status"]["label"].clone(),
+                json["status"]["tone"].clone(),
+            )
+        };
+        assert_eq!(status(&mut s), ("Live".into(), "live".into()));
+        s.hotkey_failures = vec![(crate::state::STOP_KEY.into(), "Taken.".into())];
+        assert_eq!(status(&mut s), ("Hotkeys blocked".into(), "warn".into()));
+        s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
+        assert_eq!(status(&mut s), ("Audio problem".into(), "danger".into()));
     }
 
     #[test]
