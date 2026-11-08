@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rune::tray::{Tray, TrayItem};
-use rune::{AppHandle, FileDialogOptions, Live, Tx};
+use rune::{AppHandle, FileDialogOptions, Live, PointerPress, Tx};
 use warble_engine::{Devices, Engine, Preset, SoundId, Status};
 
 use crate::find::Find;
@@ -134,6 +134,8 @@ pub struct State {
     /// notice that takes the place makes the removal permanent.
     pub removed: Option<Removed>,
     pub open_picker: Option<Picker>,
+    /// A sound tile's context menu (Trim, Remove), and where it opened.
+    pub sound_menu: Option<(SoundId, PointerPress)>,
     pub drop_hover: bool,
     pub meters: Meters,
     pub handle: Option<AppHandle<State>>,
@@ -191,6 +193,7 @@ impl State {
             notice: None,
             removed: None,
             open_picker: None,
+            sound_menu: None,
             drop_hover: false,
             meters: Meters::new(),
             handle: None,

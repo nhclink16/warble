@@ -342,3 +342,47 @@ fn starting_up_deletes_a_removal_left_waiting() {
     assert_eq!(names, ["Keep"]);
     assert!(!Path::new(&dir.join(HOLD_DIR)).exists());
 }
+
+#[test]
+fn a_tiles_context_menu_trims_and_removes_from_the_keyboard() {
+    let mut rt = app();
+    rt.drop_files(vec![PathBuf::from("Bruh.wav")], Some((200.0, 300.0)));
+    settle(&mut rt);
+    let id = rt.state.sounds[0].id;
+    let focused = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.focused)
+            .and_then(|e| e.key)
+    };
+    for _ in 0..10 {
+        if focused(&rt) == Some(format!("sound-{}", id.0)) {
+            break;
+        }
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        settle(&mut rt);
+    }
+    assert_eq!(
+        focused(&rt),
+        Some(format!("sound-{}", id.0)),
+        "Tab reaches the tile"
+    );
+    rt.key(KeyEvent {
+        key: Key::Function(10),
+        mods: Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    });
+    settle(&mut rt);
+    assert!(
+        rt.find(&format!("sound-menu-{}-item0", id.0)).is_some(),
+        "Trim…"
+    );
+    tap(&mut rt, &format!("sound-menu-{}-item1", id.0));
+    assert!(rt.state.sounds.is_empty(), "Remove");
+    assert!(rt.state.sound_menu.is_none());
+}

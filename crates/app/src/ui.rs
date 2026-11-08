@@ -6,8 +6,8 @@ use rune::{
     row, text,
 };
 use rune_kit::{
-    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, PaletteSeed,
-    SegmentedControl, Select, SelectAppearance, Switch,
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
+    PaletteSeed, SegmentedControl, Select, SelectAppearance, Switch,
 };
 use warble_engine::{DeviceInfo, Preset};
 
@@ -298,7 +298,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Tab::Voice => scrolling(voice(s, cx, &k)),
         Tab::Soundboard if s.trim.is_some() => find_view::trim_page(s, cx, &k),
         Tab::Soundboard if s.find.open => find_view::find_page(s, &k),
-        Tab::Soundboard => soundboard(s, cx, &k),
+        Tab::Soundboard => soundboard(s, cx, &k, &mut layer),
         Tab::Setup => scrolling(setup(s, &k, &mut layer)),
     };
     let mut root = col()
@@ -548,6 +548,7 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
         .fill(fill)
         .border(if selected { 1.5 } else { 1.0 }, border)
         .on_press(move |s: &mut State| s.select_preset(p))
+        .press_scale(0.96)
         .child(icon(preset_icon(p), 20.0).color(glyph).mb(1.0))
         .child(
             text(p.name())
@@ -799,7 +800,7 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
 
 // --- Soundboard ---
 
-fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
+fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El {
     if s.sounds.is_empty() {
         return col()
             .key("soundboard")
@@ -812,14 +813,15 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
             .child(empty_state(k));
     }
     let any_playing = !s.status.playing.is_empty();
+    // In a narrow window, Stop all wraps onto its own line rather than being cut off.
     let toolbar = row()
         .key("sound-tools")
         .w_full()
-        .gap(8.0)
+        .flex_wrap()
+        .gaps(8.0, 8.0)
+        .justify_between()
         .center_y()
-        .child(add_button(k))
-        .child(find_button(k))
-        .child(el().grow(1.0))
+        .child(row().gap(8.0).child(add_button(k)).child(find_button(k)))
         .child(
             Button::new("Stop all")
                 .icon(&STOP)
@@ -831,7 +833,7 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         );
     let mut grid = el().key("sounds").w_full().equal_columns(3).gaps(8.0, 8.0);
     for (i, sound) in s.sounds.iter().enumerate() {
-        grid = grid.child(sound_tile(s, k, i, sound));
+        grid = grid.child(sound_tile(s, k, layer, i, sound));
     }
     let volume = slider(
         k,
@@ -913,44 +915,49 @@ fn add_button(k: &Kit) -> El {
         .key("add-sounds")
 }
 
-fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
+/// A tile plays its sound when pressed. Trim and Remove show at its foot on hover, and its
+/// context menu (right-click, the Menu key or Shift+F10) offers both from the keyboard.
+fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) -> El {
     let (id, playing) = (sound.id, s.is_playing(sound.id));
     let hotkey = if i < 9 {
         state::keycaps(&state::sound_key(i)).join("+")
     } else {
         String::new()
     };
-    let remove = el()
-        .key(format!("remove-{}", id.0))
-        .role("button")
-        .label(format!("Remove {}", sound.name))
-        .help("Remove")
-        .pin(None, Some(5.0), Some(5.0), None)
-        .size(20.0, 20.0)
-        .radius(10.0)
-        .center()
-        .fill(k.c.layer_03)
-        .hover(k.c.hover)
-        .press(k.c.pressed)
+    // Hover-only, so Tab skips them: the context menu is the keyboard's way in.
+    let action = |glyph: &'static Icon, key: String, label: String, help: &str| {
+        IconButton::new(glyph)
+            .variant(IconButtonVariant::GhostMuted)
+            .control_size(ControlSize::Small)
+            .label(label)
+            .help(help)
+            .build(k)
+            .key(key)
+            .tab_index(-1)
+    };
+    let actions = row()
+        .pin(None, None, Some(5.0), Some(5.0))
+        .gap(2.0)
         .group_opacity(0.0, 1.0)
-        .on_press(move |s: &mut State| s.remove_sound(id))
-        .child(icon(&CLOSE, 12.0).color(k.c.icon_base));
-    let trim = el()
-        .key(format!("trim-{}", id.0))
-        .role("button")
-        .label(format!("Trim {}", sound.name))
-        .help("Trim")
-        .pin(None, Some(5.0), Some(29.0), None)
-        .size(20.0, 20.0)
-        .radius(10.0)
-        .center()
-        .fill(k.c.layer_03)
-        .hover(k.c.hover)
-        .press(k.c.pressed)
-        .group_opacity(0.0, 1.0)
-        .on_press(move |s: &mut State| s.trim_sound(id))
-        .child(icon(&SCISSORS, 12.0).color(k.c.icon_base));
-    col()
+        .child(
+            action(
+                &SCISSORS,
+                format!("trim-{}", id.0),
+                format!("Trim {}", sound.name),
+                "Trim",
+            )
+            .on_press(move |s: &mut State| s.trim_sound(id)),
+        )
+        .child(
+            action(
+                &CLOSE,
+                format!("remove-{}", id.0),
+                format!("Remove {}", sound.name),
+                "Remove",
+            )
+            .on_press(move |s: &mut State| s.remove_sound(id)),
+        );
+    let tile = col()
         .key(format!("sound-{}", id.0))
         .role("button")
         .label(if playing {
@@ -959,6 +966,7 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
             format!("Play {}", sound.name)
         })
         .focusable(true)
+        .w_full()
         .h(72.0)
         .pt(9.0)
         .pb(8.0)
@@ -977,6 +985,8 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
         .hover(k.c.hover)
         .press(k.c.pressed)
         .on_press(move |s: &mut State| s.play(id))
+        .press_scale(0.96)
+        .on_secondary_press(move |s: &mut State, p, _| s.sound_menu = Some((id, p)))
         .justify_between()
         .child(
             text(sound.name.clone())
@@ -984,7 +994,7 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
                 .color(k.c.text_base)
                 .max_lines(2)
                 .w_full()
-                .pr(14.0)
+                .help_when_truncated(sound.name.clone())
                 .a11y_hidden(),
         )
         .child(
@@ -992,6 +1002,7 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
                 .w_full()
                 .gap(6.0)
                 .center_y()
+                .group_opacity(1.0, 0.0)
                 .child(
                     text(hotkey)
                         .font(TINY)
@@ -1012,8 +1023,19 @@ fn sound_tile(s: &State, k: &Kit, i: usize, sound: &Sound) -> El {
                     }),
                 ),
         )
-        .child(trim)
-        .child(remove)
+        .child(actions);
+    let point = s.sound_menu.filter(|(m, _)| *m == id).map(|(_, p)| p);
+    rune_kit::context_menu(format!("sound-menu-{}", id.0), tile, point)
+        .item(MenuItem::new("Trim…").on_select(move |s: &mut State| {
+            s.sound_menu = None;
+            s.trim_sound(id);
+        }))
+        .item(MenuItem::new("Remove").on_select(move |s: &mut State| {
+            s.sound_menu = None;
+            s.remove_sound(id);
+        }))
+        .on_close(|s: &mut State| s.sound_menu = None)
+        .build(k, layer)
 }
 
 fn empty_state(k: &Kit) -> El {
