@@ -1596,9 +1596,11 @@ fn empty_state(k: &Kit) -> El {
 
 /// The readouts under the tabs, the same on every page: a dismissable line about something
 /// that went wrong (a file that didn't load, say), and under it the Undo for a sound just
-/// removed. One place, so a screen reader hears each once whichever page shows.
+/// removed, on the Soundboard's pages only. One place, so a screen reader hears each once
+/// whichever page shows.
 fn notice(s: &State, k: &Kit) -> Option<El> {
-    if s.notice.is_none() && s.removed.is_none() {
+    let removed = s.removed.as_ref().filter(|_| s.tab == Tab::Soundboard);
+    if s.notice.is_none() && removed.is_none() {
         return None;
     }
     // Where keyboard focus goes when one is dismissed or undone: the page's first control.
@@ -1615,7 +1617,7 @@ fn notice(s: &State, k: &Kit) -> Option<El> {
             .role("alert")
             .label(message.clone())
             // Dismissed above an Undo, focus goes on to the Undo.
-            .focus_return(if s.removed.is_some() {
+            .focus_return(if removed.is_some() {
                 "undo-remove"
             } else {
                 after
@@ -1640,10 +1642,7 @@ fn notice(s: &State, k: &Kit) -> Option<El> {
             )
             .child(dismiss(k, "dismiss-notice", |s: &mut State| s.notice = None).mt(2.0))
     });
-    let removed = s
-        .removed
-        .as_ref()
-        .map(|r| removed_row(k, r).focus_return(after));
+    let removed = removed.map(|r| removed_row(k, r).focus_return(after));
     // A long list of problems scrolls in its place rather than push the page off the window.
     Some(
         col()

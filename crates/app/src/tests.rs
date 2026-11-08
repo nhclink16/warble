@@ -778,6 +778,28 @@ fn a_notice_shows_once_above_whichever_page_shows() {
     rt.update(|s, _| s.open_trim(Clip::new(vec![0.1; 8000], 8000), "Bruh"));
     settle(&mut rt);
     assert_eq!(path(&rt), on_setup, "Trim");
+
+    // The Undo for a removed sound stays with the Soundboard: its pads, Find and Trim.
+    let mut rt = app();
+    scene(&mut rt, "removed");
+    let shows = |rt: &Runtime<State>| rt.find("removed").is_some();
+    assert!(shows(&rt), "the pads");
+    for tab in [Tab::Voice, Tab::Setup] {
+        rt.update(move |s, _| s.set_tab(tab));
+        settle(&mut rt);
+        assert!(!shows(&rt), "{tab:?}");
+        assert!(rt.find("notices").is_none(), "no empty box on {tab:?}");
+    }
+    rt.update(|s, _| {
+        s.set_tab(Tab::Soundboard);
+        s.open_find();
+    });
+    settle(&mut rt);
+    assert!(shows(&rt), "Find sounds");
+    rt.update(|s, _| s.open_trim(Clip::new(vec![0.1; 8000], 8000), "Bruh"));
+    settle(&mut rt);
+    assert!(shows(&rt), "Trim");
+    assert!(rt.state.removed.is_some(), "still there to undo");
 }
 
 #[test]
