@@ -14,7 +14,7 @@ use warble_engine::{DeviceInfo, Preset};
 use crate::find_view;
 use crate::remote_view;
 use crate::settings::DROP_EXTS;
-use crate::state::{self, Picker, SEGMENTS, Sound, State, Tab};
+use crate::state::{self, Picker, Removed, SEGMENTS, Sound, State, Tab};
 
 pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
@@ -1054,8 +1054,14 @@ fn empty_state(k: &Kit) -> El {
         )
 }
 
-/// A dismissable line about something that went wrong, such as a file that didn't load.
+/// A dismissable line about something that went wrong, such as a file that didn't load, or
+/// else the Undo for a sound just removed.
 pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
+    if s.notice.is_none()
+        && let Some(r) = &s.removed
+    {
+        return Some(removed_row(k, r));
+    }
     let message = s.notice.clone()?;
     Some(
         row()
@@ -1092,6 +1098,48 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
                     .key("dismiss-notice"),
             ),
     )
+}
+
+fn removed_row(k: &Kit, r: &Removed) -> El {
+    let says = format!("Removed “{}”.", r.name);
+    row()
+        .key("removed")
+        .role("status")
+        .label(says.clone())
+        .w_full()
+        .pl(12.0)
+        .pr(6.0)
+        .py(6.0)
+        .gap(8.0)
+        .center_y()
+        .radius(10.0)
+        .fill(k.c.layer_02)
+        .border(1.0, k.c.border_muted)
+        .child(
+            text(says)
+                .font(SMALL)
+                .color(k.c.text_base)
+                .wrap()
+                .grow(1.0)
+                .shrink()
+                .a11y_hidden(),
+        )
+        .child(
+            Button::new("Undo")
+                .control_size(ControlSize::Small)
+                .on_press(State::undo_remove)
+                .build(k)
+                .key("undo-remove"),
+        )
+        .child(
+            IconButton::new(&CLOSE)
+                .variant(IconButtonVariant::GhostMuted)
+                .control_size(ControlSize::Small)
+                .label("Dismiss")
+                .on_press(State::forget_removed)
+                .build(k)
+                .key("dismiss-removed"),
+        )
 }
 
 // --- Setup ---
@@ -1460,6 +1508,21 @@ pub const SCENES: &[Scene] = &[
         ];
     }),
     ("drop", |s| s.drop_hover = true),
+    ("removed", |s| {
+        s.add_sounds(
+            [
+                "Air horn.mp3",
+                "Bruh.wav",
+                "Sad trombone.ogg",
+                "Wilhelm scream.flac",
+            ]
+            .map(std::path::PathBuf::from)
+            .to_vec(),
+        );
+        if let Some(id) = s.sounds.iter().find(|x| x.name == "Bruh").map(|x| x.id) {
+            s.remove_sound(id);
+        }
+    }),
     ("remote", remote_view::scenes::on),
     ("remote-tailscale", remote_view::scenes::tailscale),
     ("remote-no-network", remote_view::scenes::no_network),

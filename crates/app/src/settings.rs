@@ -122,7 +122,7 @@ pub fn sound_name(path: &Path) -> String {
     )
 }
 
-/// Every audio file in `dir`, sorted by name.
+/// Every audio file in `dir`, sorted by name. Folders, such as the holding folder, are skipped.
 pub fn list_sounds(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -183,6 +183,38 @@ pub fn delete_copy(path: &Path, dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Inside the sounds folder: where a removed sound waits while it can still be undone.
+pub const HOLD_DIR: &str = ".removed";
+
+/// Moves the app's copy of a removed sound into the holding folder, and says where it went.
+/// A file outside `dir` is the user's own and stays where it is (`None`).
+pub fn hold_copy(path: &Path, dir: &Path) -> std::io::Result<Option<PathBuf>> {
+    if path.parent() != Some(dir) {
+        return Ok(None);
+    }
+    let hold = dir.join(HOLD_DIR);
+    std::fs::create_dir_all(&hold)?;
+    let to = hold.join(path.file_name().unwrap_or_default());
+    std::fs::rename(path, &to)?;
+    Ok(Some(to))
+}
+
+/// Moves a held sound back into `dir` under `name`, or "stem (2).ext" if that's been taken since.
+pub fn restore_copy(held: &Path, dir: &Path, name: &Path) -> std::io::Result<PathBuf> {
+    let (file, dest) = create_in(dir, name)?;
+    drop(file);
+    if let Err(e) = std::fs::rename(held, &dest) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e);
+    }
+    Ok(dest)
+}
+
+/// Deletes whatever waits in the holding folder: removals that can't be undone any more.
+pub fn empty_hold(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir.join(HOLD_DIR));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,5 +262,36 @@ mod tests {
         assert!(original.exists(), "a file outside the sounds folder stays");
         delete_copy(&a, &sounds).unwrap();
         assert!(!a.exists());
+    }
+
+    #[test]
+    fn a_held_sound_goes_back_under_a_free_name_and_the_list_skips_the_hold() {
+        let (outside, sounds) = (scratch("hold-outside"), scratch("hold-sounds"));
+        let original = outside.join("Bruh.wav");
+        std::fs::write(&original, b"x").unwrap();
+        assert_eq!(hold_copy(&original, &sounds).unwrap(), None);
+        assert!(
+            original.exists(),
+            "a file outside the sounds folder isn't moved"
+        );
+
+        let copy = copy_in(&original, &sounds).unwrap();
+        let held = hold_copy(&copy, &sounds).unwrap().expect("moved aside");
+        assert!(!copy.exists() && held.exists());
+        assert!(
+            list_sounds(&sounds).is_empty(),
+            "the holding folder isn't a sound"
+        );
+
+        // A new "Bruh.wav" arrived in the meantime: the old one comes back beside it.
+        std::fs::write(&copy, b"new").unwrap();
+        let back = restore_copy(&held, &sounds, Path::new("Bruh.wav")).unwrap();
+        assert_eq!(back.file_name().unwrap(), "Bruh (2).wav");
+        assert_eq!(std::fs::read(&copy).unwrap(), b"new");
+        assert!(!held.exists());
+
+        let again = hold_copy(&back, &sounds).unwrap().unwrap();
+        empty_hold(&sounds);
+        assert!(!again.exists() && !sounds.join(HOLD_DIR).exists());
     }
 }

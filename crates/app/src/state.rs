@@ -36,6 +36,21 @@ pub struct Sound {
     pub path: PathBuf,
 }
 
+/// A removed sound, kept aside while its Undo shows.
+pub struct Removed {
+    pub name: String,
+    /// Where it was on the board.
+    pub path: PathBuf,
+    /// Where it waits in the holding folder; `None` for a file outside the sounds folder,
+    /// which was never moved.
+    pub held: Option<PathBuf>,
+    /// When the Undo goes and the removal is for good.
+    pub until: Instant,
+}
+
+/// How long a removal can be undone.
+pub const UNDO_TIME: Duration = Duration::from_secs(10);
+
 /// Lit and unlit segments in each level meter.
 pub const SEGMENTS: usize = 28;
 pub const SEGMENT_OFF: f32 = 0.13;
@@ -115,6 +130,9 @@ pub struct State {
     pub hotkey_failures: Vec<(String, String)>,
     /// A problem worth telling the user about, such as a file that didn't load.
     pub notice: Option<String>,
+    /// The last sound removed, while it can be undone. It shares the notice's place, and a
+    /// notice that takes the place makes the removal permanent.
+    pub removed: Option<Removed>,
     pub open_picker: Option<Picker>,
     pub drop_hover: bool,
     pub meters: Meters,
@@ -171,6 +189,7 @@ impl State {
             sounds: Vec::new(),
             hotkey_failures: Vec::new(),
             notice: None,
+            removed: None,
             open_picker: None,
             drop_hover: false,
             meters: Meters::new(),
@@ -222,9 +241,11 @@ impl State {
         }
     }
 
-    /// Loads what's already in the sounds folder.
+    /// Loads what's already in the sounds folder, first deleting any removal that was waiting
+    /// on an Undo when Warble last closed.
     pub fn load_saved_sounds(&mut self) {
         if let Some(dir) = self.sounds_dir() {
+            settings::empty_hold(&dir);
             self.load_paths(settings::list_sounds(&dir), false);
         }
     }
@@ -234,25 +255,35 @@ impl State {
     /// Reads the engine about 30 times a second while the window shows, and never while it's
     /// hidden. True when something the view shows changed; the meters move on their own.
     pub fn poll(&mut self, t: f64, tx: &mut Tx) -> bool {
+        let now = Instant::now();
         if let Some(due) = self.save_due {
-            let now = Instant::now();
             if now >= due {
                 self.save_now();
             } else {
                 tx.wake_after(due - now);
             }
         }
+        // The Undo goes when its time is up or another notice takes its place.
+        let mut undo_gone = false;
+        if let Some(until) = self.removed.as_ref().map(|r| r.until) {
+            if now >= until || self.notice.is_some() {
+                self.forget_removed();
+                undo_gone = true;
+            } else {
+                tx.wake_after(until - now);
+            }
+        }
         if !self.headless && self.handle.as_ref().is_some_and(|h| !h.is_visible()) {
-            return false;
+            return undo_gone;
         }
         let since = t - self.last_poll;
         if since < POLL * 0.9 {
             tx.wake_after(Duration::from_secs_f64(POLL - since));
-            return false;
+            return undo_gone;
         }
         self.last_poll = t;
         tx.wake_after(Duration::from_secs_f64(POLL));
-        self.refresh_status()
+        self.refresh_status() || undo_gone
     }
 
     pub fn refresh_status(&mut self) -> bool {
@@ -383,18 +414,69 @@ impl State {
         self.status.playing.clear();
     }
 
-    /// Removes the tile and deletes the app's copy (never the file the user added it from).
+    /// Removes the tile and moves the app's copy into the holding folder, so Undo can bring it
+    /// back for a few seconds. The file the user added it from is never touched.
     pub fn remove_sound(&mut self, id: SoundId) {
         let Some(i) = self.sounds.iter().position(|s| s.id == id) else {
             return;
         };
+        // One removal can be undone at a time: the one before is now for good.
+        self.forget_removed();
+        let held = match self.sounds_dir() {
+            Some(dir) => match settings::hold_copy(&self.sounds[i].path, &dir) {
+                Ok(held) => held,
+                Err(e) => {
+                    self.notice = Some(format!(
+                        "Couldn’t remove “{}”: {e}. Close any app that’s using it, then try again.",
+                        self.sounds[i].name
+                    ));
+                    return;
+                }
+            },
+            None => None,
+        };
         let sound = self.sounds.remove(i);
         self.engine.remove_sound(id);
         self.status.playing.retain(|p| *p != id);
-        if let Some(dir) = self.sounds_dir()
-            && let Err(e) = settings::delete_copy(&sound.path, &dir)
+        self.notice = None;
+        self.removed = Some(Removed {
+            name: sound.name,
+            path: sound.path,
+            held,
+            until: Instant::now() + UNDO_TIME,
+        });
+    }
+
+    /// Puts the last removed sound back on the board.
+    pub fn undo_remove(&mut self) {
+        let Some(r) = self.removed.take() else {
+            return;
+        };
+        let path = match (&r.held, self.sounds_dir()) {
+            (Some(held), Some(dir)) => {
+                let name = r.path.file_name().unwrap_or_default();
+                match settings::restore_copy(held, &dir, name.as_ref()) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        self.notice = Some(format!(
+                            "Couldn’t put “{}” back: {e}. Add it again from where you got it.",
+                            r.name
+                        ));
+                        return;
+                    }
+                }
+            }
+            _ => r.path,
+        };
+        self.load_paths(vec![path], false);
+    }
+
+    /// Makes the last removal permanent: its Undo goes and the holding folder is emptied.
+    pub fn forget_removed(&mut self) {
+        if self.removed.take().is_some()
+            && let Some(dir) = self.sounds_dir()
         {
-            self.notice = Some(format!("Couldn't delete {}: {e}", sound.name));
+            settings::empty_hold(&dir);
         }
     }
 

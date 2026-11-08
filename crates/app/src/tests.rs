@@ -1,11 +1,13 @@
 //! The window driven as a user would: taps, drops and links, on the mock engine.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use warble_engine::{Clip, Preset};
 
 use crate::find::YouTube;
+use crate::settings::HOLD_DIR;
 use crate::state::{State, Tab};
 use crate::ui;
 
@@ -13,6 +15,49 @@ fn app() -> Runtime<State> {
     let mut rt = Runtime::new(State::mock(), ui::view, (400.0, 620.0), Env::new(true, 1.0));
     settle(&mut rt);
     rt
+}
+
+/// The window on the mock engine with a real (temporary) config folder, so sounds are copied
+/// in and removed files really move. Returns the app and a file outside that folder.
+fn app_with_folder(name: &str) -> (Runtime<State>, PathBuf) {
+    let root = std::env::temp_dir().join(format!("warble-ui-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let outside = root.join("Downloads");
+    std::fs::create_dir_all(&outside).unwrap();
+    let original = outside.join("Air horn.wav");
+    std::fs::write(
+        &original,
+        b"not really audio; the mock engine doesn't read it",
+    )
+    .unwrap();
+    let mut s = State::mock();
+    s.dir = Some(root.join("config"));
+    let mut rt = Runtime::new(s, ui::view, (400.0, 620.0), Env::new(true, 1.0));
+    settle(&mut rt);
+    (rt, original)
+}
+
+fn remove_first(rt: &mut Runtime<State>) {
+    let key = format!("remove-{}", rt.state.sounds[0].id.0);
+    tap(rt, &key);
+}
+
+/// Runs the app's poll, as the event loop does about 30 times a second.
+fn poll(rt: &mut Runtime<State>) {
+    rt.update(|s, tx| {
+        s.poll(1e6, tx);
+    });
+    settle(rt);
+}
+
+fn sounds_dir(rt: &Runtime<State>) -> PathBuf {
+    rt.state.sounds_dir().unwrap()
+}
+
+fn holding(rt: &Runtime<State>) -> Vec<PathBuf> {
+    std::fs::read_dir(sounds_dir(rt).join(HOLD_DIR))
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default()
 }
 
 /// Runs frames until a page that just appeared has faded in and takes presses.
@@ -195,4 +240,105 @@ fn a_dropped_video_opens_its_audio_in_the_trim_editor() {
     assert!(t.clip.samples().iter().any(|v| v.abs() > 0.1), "the tone");
     assert_eq!(rt.state.find.trim_name.text, "tone-video");
     assert!(rt.state.sounds.is_empty(), "no tile until it's saved");
+}
+
+#[test]
+fn a_removed_sound_waits_aside_and_undo_puts_it_back() {
+    let (mut rt, original) = app_with_folder("undo");
+    rt.drop_files(vec![original.clone()], Some((200.0, 300.0)));
+    settle(&mut rt);
+    let copy = rt.state.sounds[0].path.clone();
+    assert_eq!(copy, sounds_dir(&rt).join("Air horn.wav"));
+
+    remove_first(&mut rt);
+    assert!(rt.state.sounds.is_empty());
+    assert!(!copy.exists(), "off the board's folder");
+    assert_eq!(
+        holding(&rt),
+        [sounds_dir(&rt).join(HOLD_DIR).join("Air horn.wav")]
+    );
+    let row = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("removed"));
+    assert_eq!(
+        row.and_then(|e| e.label).as_deref(),
+        Some("Removed “Air horn”.")
+    );
+
+    tap(&mut rt, "undo-remove");
+    let names: Vec<&str> = rt.state.sounds.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Air horn"]);
+    assert!(copy.exists() && holding(&rt).is_empty(), "moved back");
+    assert!(rt.find("removed").is_none(), "the row goes");
+    assert!(original.exists(), "the user's own file is never touched");
+}
+
+#[test]
+fn a_removal_is_for_good_once_its_undo_times_out_is_dismissed_or_followed() {
+    let (mut rt, original) = app_with_folder("forget");
+    let other = original.with_file_name("Bruh.wav");
+    std::fs::write(&other, b"x").unwrap();
+    rt.drop_files(vec![original.clone(), other], Some((200.0, 300.0)));
+    settle(&mut rt);
+    let (air, bruh) = (rt.state.sounds[0].id, rt.state.sounds[1].id);
+
+    // A second removal makes the first permanent.
+    tap(&mut rt, &format!("remove-{}", air.0));
+    tap(&mut rt, &format!("remove-{}", bruh.0));
+    assert_eq!(rt.state.removed.as_ref().unwrap().name, "Bruh");
+    assert_eq!(
+        holding(&rt),
+        [sounds_dir(&rt).join(HOLD_DIR).join("Bruh.wav")]
+    );
+
+    // Before its time, the poll leaves it; after, the file is gone for good.
+    poll(&mut rt);
+    assert!(rt.state.removed.is_some() && rt.find("removed").is_some());
+    rt.state.removed.as_mut().unwrap().until = Instant::now();
+    poll(&mut rt);
+    assert!(rt.state.removed.is_none() && rt.find("removed").is_none());
+    assert!(holding(&rt).is_empty());
+    assert!(std::fs::read_dir(sounds_dir(&rt)).unwrap().next().is_none());
+    assert!(original.exists(), "the user's own file is never touched");
+
+    // Dismissed, it goes at once; a notice that takes its place ends it too.
+    rt.drop_files(vec![original.clone()], Some((200.0, 300.0)));
+    settle(&mut rt);
+    remove_first(&mut rt);
+    tap(&mut rt, "dismiss-removed");
+    assert!(rt.state.removed.is_none() && holding(&rt).is_empty());
+    rt.drop_files(vec![original.clone()], Some((200.0, 300.0)));
+    settle(&mut rt);
+    remove_first(&mut rt);
+    rt.update(|s, _| s.notice = Some("Something else went wrong.".into()));
+    poll(&mut rt);
+    assert!(rt.state.removed.is_none() && holding(&rt).is_empty());
+}
+
+#[test]
+fn a_sound_outside_the_sounds_folder_is_never_deleted() {
+    let mut rt = app();
+    let file = std::env::temp_dir().join(format!("warble-ui-own-{}.wav", std::process::id()));
+    std::fs::write(&file, b"x").unwrap();
+    rt.drop_files(vec![file.clone()], Some((200.0, 300.0)));
+    settle(&mut rt);
+    remove_first(&mut rt);
+    rt.state.removed.as_mut().unwrap().until = Instant::now();
+    poll(&mut rt);
+    assert!(file.exists());
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn starting_up_deletes_a_removal_left_waiting() {
+    let (mut rt, _) = app_with_folder("startup");
+    let dir = sounds_dir(&rt);
+    std::fs::create_dir_all(dir.join(HOLD_DIR)).unwrap();
+    std::fs::write(dir.join(HOLD_DIR).join("Old.wav"), b"x").unwrap();
+    std::fs::write(dir.join("Keep.wav"), b"x").unwrap();
+    rt.update(|s, _| s.load_saved_sounds());
+    let names: Vec<&str> = rt.state.sounds.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Keep"]);
+    assert!(!Path::new(&dir.join(HOLD_DIR)).exists());
 }
