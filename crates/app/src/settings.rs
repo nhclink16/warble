@@ -195,8 +195,12 @@ pub fn hold_copy(path: &Path, dir: &Path) -> std::io::Result<Option<PathBuf>> {
     let hold = dir.join(HOLD_DIR);
     std::fs::create_dir_all(&hold)?;
     let to = hold.join(path.file_name().unwrap_or_default());
-    std::fs::rename(path, &to)?;
-    Ok(Some(to))
+    match std::fs::rename(path, &to) {
+        Ok(()) => Ok(Some(to)),
+        // Already gone (deleted outside Warble): nothing to hold, and the tile can still go.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Moves a held sound back into `dir` under `name`, or "stem (2).ext" if that's been taken since.

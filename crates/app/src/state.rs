@@ -44,12 +44,13 @@ pub struct Removed {
     /// Where it waits in the holding folder; `None` for a file outside the sounds folder,
     /// which was never moved.
     pub held: Option<PathBuf>,
-    /// When the Undo goes and the removal is for good.
-    pub until: Instant,
+    /// When it was removed.
+    pub at: Instant,
 }
 
-/// How long a removal can be undone.
-pub const UNDO_TIME: Duration = Duration::from_secs(10);
+/// Just after a removal the board ignores presses, so a double-click on × can't play or
+/// remove the tile that slides into its place.
+pub const REMOVE_SETTLE: Duration = Duration::from_millis(500);
 
 /// Lit and unlit segments in each level meter.
 pub const SEGMENTS: usize = 28;
@@ -130,8 +131,8 @@ pub struct State {
     pub hotkey_failures: Vec<(String, String)>,
     /// A problem worth telling the user about, such as a file that didn't load.
     pub notice: Option<String>,
-    /// The last sound removed, while it can be undone. It shares the notice's place, and a
-    /// notice that takes the place makes the removal permanent.
+    /// The last sound removed, while it can be undone: until Dismiss, the next removal, or the
+    /// next start. It shares the notice's place, and comes back once the notice is dismissed.
     pub removed: Option<Removed>,
     pub open_picker: Option<Picker>,
     /// A sound tile's context menu (Trim, Remove), and where it opened.
@@ -274,27 +275,17 @@ impl State {
                 tx.wake_after(due - now);
             }
         }
-        // The Undo goes when its time is up or another notice takes its place.
-        let mut undo_gone = false;
-        if let Some(until) = self.removed.as_ref().map(|r| r.until) {
-            if now >= until || self.notice.is_some() {
-                self.forget_removed();
-                undo_gone = true;
-            } else {
-                tx.wake_after(until - now);
-            }
-        }
         if !self.headless && self.handle.as_ref().is_some_and(|h| !h.is_visible()) {
-            return undo_gone;
+            return false;
         }
         let since = t - self.last_poll;
         if since < POLL * 0.9 {
             tx.wake_after(Duration::from_secs_f64(POLL - since));
-            return undo_gone;
+            return false;
         }
         self.last_poll = t;
         tx.wake_after(Duration::from_secs_f64(POLL));
-        self.refresh_status() || undo_gone
+        self.refresh_status()
     }
 
     pub fn refresh_status(&mut self) -> bool {
@@ -459,8 +450,9 @@ impl State {
                 Ok(held) => held,
                 Err(e) => {
                     self.notice = Some(format!(
-                        "Couldn’t remove “{}”: {e}. Close any app that’s using it, then try again.",
-                        self.sounds[i].name
+                        "Couldn’t remove “{}”. {}",
+                        self.sounds[i].name,
+                        advice(&e, "Close any app that’s using it, then try again.")
                     ));
                     return;
                 }
@@ -475,8 +467,15 @@ impl State {
             name: sound.name,
             path: sound.path,
             held,
-            until: Instant::now() + UNDO_TIME,
+            at: Instant::now(),
         });
+    }
+
+    /// True for a moment after a removal, while the board settles; see [`REMOVE_SETTLE`].
+    pub fn just_removed(&self) -> bool {
+        self.removed
+            .as_ref()
+            .is_some_and(|r| r.at.elapsed() < REMOVE_SETTLE)
     }
 
     /// Puts the last removed sound back on the board.
@@ -489,11 +488,14 @@ impl State {
                 let name = r.path.file_name().unwrap_or_default();
                 match settings::restore_copy(held, &dir, name.as_ref()) {
                     Ok(path) => path,
-                    Err(e) => {
+                    Err(_) => {
+                        // Keep it: the file still waits in the holding folder.
                         self.notice = Some(format!(
-                            "Couldn’t put “{}” back: {e}. Add it again from where you got it.",
+                            "Couldn’t put “{}” back. Close any app that might be using it, then \
+                             press Undo again.",
                             r.name
                         ));
+                        self.removed = Some(r);
                         return;
                     }
                 }
@@ -559,10 +561,11 @@ impl State {
         tx.open_file(options, |s: &mut State, result, _| match result {
             Ok(Some(path)) => s.add_sounds(vec![path]),
             Ok(None) => {}
-            Err(e) => {
-                s.notice = Some(format!(
-                    "Couldn’t open the file picker: {e}. Drop your sound files on this window instead."
-                ))
+            Err(_) => {
+                s.notice = Some(
+                    "Couldn’t open the file picker. Drop your sound files on this window instead."
+                        .into(),
+                )
             }
         });
     }
@@ -600,7 +603,7 @@ impl State {
         }
         self.sounds.sort_by_key(|s| s.name.to_lowercase());
         if !errors.is_empty() {
-            self.notice = Some(errors.join("\n"));
+            self.notice = Some(failed_files(&errors));
         }
     }
 
@@ -668,6 +671,28 @@ fn same_file(a: &Path, b: &Path) -> bool {
         )
 }
 
+/// What to do about a file error, in place of the system's own words: the next step for the
+/// usual causes, else `otherwise`.
+fn advice(e: &std::io::Error, otherwise: &'static str) -> &'static str {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => "Check the file is still there.",
+        std::io::ErrorKind::StorageFull => "Free up some space on your PC, then try again.",
+        _ => otherwise,
+    }
+}
+
+/// The files that didn't load, one per line: the first few, then how many more.
+fn failed_files(errors: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let mut lines = errors[..errors.len().min(SHOWN)].to_vec();
+    match errors.len().saturating_sub(SHOWN) {
+        0 => {}
+        1 => lines.push("1 more file didn’t load.".into()),
+        n => lines.push(format!("{n} more files didn’t load.")),
+    }
+    lines.join("\n")
+}
+
 fn load_files(
     engine: &Engine,
     paths: Vec<PathBuf>,
@@ -682,8 +707,8 @@ fn load_files(
                 Err(e) => {
                     let name = src.file_name().unwrap_or_default().to_string_lossy();
                     errors.push(format!(
-                        "Couldn’t copy “{name}” into Warble: {e}. Check the file is still there \
-                         and your PC has free space."
+                        "Couldn’t copy “{name}” into Warble. {}",
+                        advice(&e, "Copy it to your Music folder, then add it from there.")
                     ));
                     continue;
                 }

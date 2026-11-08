@@ -59,7 +59,7 @@ works in any phone browser. *Add to Home Screen* keeps it one tap away.
   check that the PC's Wi-Fi is set to *Private* in Windows settings, and that Warble is allowed in
   *Windows Security → Firewall & network protection → Allow an app through firewall*.
 - **The code holds a secret.** Only phones that scanned it can use the remote. *Sign out all phones* makes a new code, so each phone has to scan again.
-- **Sending a link** from the phone opens it on the PC, in the trim editor, where you cut and save it.
+- **Sending a link** from the phone opens it on the PC, in the trim editor, where you trim it and add it.
 - Warble listens on port 47823 (or a free port, when another app has that one), over plain HTTP on your
   own network. Use it on your home Wi-Fi or over Tailscale, not on shared or public Wi-Fi, where another
   device could read the code off the network.

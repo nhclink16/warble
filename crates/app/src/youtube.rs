@@ -21,10 +21,9 @@ pub const MAX_SECONDS: u64 = 20 * 60;
 /// How often it asks yt-dlp to update itself.
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The way out when a link fails: dropped videos open in the trim editor.
-const DROP_IT: &str = "save the video as an MP4 and drop it on this window.";
+const DROP_IT: &str = "save the video as an MP4 and drop it on Warble’s window on your PC.";
 /// Audio Warble can't decode.
-pub const UNREADABLE: &str =
-    "Warble can’t read this video’s audio. Save the video as an MP4 and drop it on this window.";
+pub const UNREADABLE: &str = "Warble can’t read this video’s audio. Save the video as an MP4 and drop it on Warble’s window on your PC.";
 
 /// One yt-dlp at a time: an update replaces the program a fetch would run.
 static RUN: Mutex<()> = Mutex::new(());
@@ -291,7 +290,7 @@ mod tests {
         assert_eq!(
             plain_error("ERROR: [twitter] 123: NSFW tweet requires authentication."),
             "That post needs a signed-in X account. Instead, save the video as an MP4 and drop \
-             it on this window."
+             it on Warble’s window on your PC."
         );
         assert_eq!(
             plain_error("ERROR: [twitter:broadcast] 1rmx: Broadcast no longer exists"),
@@ -300,12 +299,12 @@ mod tests {
         assert_eq!(
             plain_error("ERROR: [youtube] abc: Sign in to confirm you're not a bot"),
             "YouTube is blocking downloads right now. Try again later, or save the video as an \
-             MP4 and drop it on this window."
+             MP4 and drop it on Warble’s window on your PC."
         );
         assert_eq!(
             plain_error("something odd"),
             "Couldn’t get that video’s audio. Try again, or save the video as an MP4 and drop it \
-             on this window."
+             on Warble’s window on your PC."
         );
         // What people read: plain words, curly apostrophes, no tool or codec names.
         for e in [

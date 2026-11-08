@@ -369,7 +369,7 @@ impl State {
                         t.saving = false;
                     }
                     s.notice = Some(
-                        "Couldn’t save the sound. Check that your drive has space, then try again."
+                        "Couldn’t add the sound. Check that your drive has space, then try again."
                             .into(),
                     );
                 }

@@ -1,14 +1,13 @@
 //! The window driven as a user would: taps, drops and links, on the mock engine.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use warble_engine::{Clip, Preset};
 
 use crate::find::YouTube;
 use crate::settings::HOLD_DIR;
-use crate::state::{State, Tab};
+use crate::state::{REMOVE_SETTLE, State, Tab};
 use crate::ui;
 
 fn app() -> Runtime<State> {
@@ -276,7 +275,7 @@ fn a_removed_sound_waits_aside_and_undo_puts_it_back() {
 }
 
 #[test]
-fn a_removal_is_for_good_once_its_undo_times_out_is_dismissed_or_followed() {
+fn a_removal_is_for_good_once_dismissed_or_followed_and_outlasts_a_notice() {
     let (mut rt, original) = app_with_folder("forget");
     let other = original.with_file_name("Bruh.wav");
     std::fs::write(&other, b"x").unwrap();
@@ -285,36 +284,29 @@ fn a_removal_is_for_good_once_its_undo_times_out_is_dismissed_or_followed() {
     let (air, bruh) = (rt.state.sounds[0].id, rt.state.sounds[1].id);
 
     // A second removal makes the first permanent.
-    tap(&mut rt, &format!("remove-{}", air.0));
-    tap(&mut rt, &format!("remove-{}", bruh.0));
+    rt.update(|s, _| s.remove_sound(air));
+    rt.update(|s, _| s.remove_sound(bruh));
     assert_eq!(rt.state.removed.as_ref().unwrap().name, "Bruh");
     assert_eq!(
         holding(&rt),
         [sounds_dir(&rt).join(HOLD_DIR).join("Bruh.wav")]
     );
 
-    // Before its time, the poll leaves it; after, the file is gone for good.
+    // No timer: the poll leaves it, and an unrelated notice only covers it for a while.
     poll(&mut rt);
     assert!(rt.state.removed.is_some() && rt.find("removed").is_some());
-    rt.state.removed.as_mut().unwrap().until = Instant::now();
-    poll(&mut rt);
-    assert!(rt.state.removed.is_none() && rt.find("removed").is_none());
-    assert!(holding(&rt).is_empty());
-    assert!(std::fs::read_dir(sounds_dir(&rt)).unwrap().next().is_none());
-    assert!(original.exists(), "the user's own file is never touched");
-
-    // Dismissed, it goes at once; a notice that takes its place ends it too.
-    rt.drop_files(vec![original.clone()], Some((200.0, 300.0)));
-    settle(&mut rt);
-    remove_first(&mut rt);
-    tap(&mut rt, "dismiss-removed");
-    assert!(rt.state.removed.is_none() && holding(&rt).is_empty());
-    rt.drop_files(vec![original.clone()], Some((200.0, 300.0)));
-    settle(&mut rt);
-    remove_first(&mut rt);
     rt.update(|s, _| s.notice = Some("Something else went wrong.".into()));
     poll(&mut rt);
+    assert!(rt.state.removed.is_some() && !holding(&rt).is_empty());
+    assert!(rt.find("removed").is_none(), "the notice shows first");
+    tap(&mut rt, "dismiss-notice");
+    assert!(rt.find("removed").is_some(), "then the Undo again");
+
+    // Dismissed, it's gone for good.
+    tap(&mut rt, "dismiss-removed");
     assert!(rt.state.removed.is_none() && holding(&rt).is_empty());
+    assert!(std::fs::read_dir(sounds_dir(&rt)).unwrap().next().is_none());
+    assert!(original.exists(), "the user's own file is never touched");
 }
 
 #[test]
@@ -325,10 +317,72 @@ fn a_sound_outside_the_sounds_folder_is_never_deleted() {
     rt.drop_files(vec![file.clone()], Some((200.0, 300.0)));
     settle(&mut rt);
     remove_first(&mut rt);
-    rt.state.removed.as_mut().unwrap().until = Instant::now();
-    poll(&mut rt);
+    tap(&mut rt, "dismiss-removed");
     assert!(file.exists());
     let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn a_tile_whose_file_is_gone_still_comes_off() {
+    let (mut rt, original) = app_with_folder("gone");
+    rt.drop_files(vec![original], Some((200.0, 300.0)));
+    settle(&mut rt);
+    std::fs::remove_file(&rt.state.sounds[0].path).unwrap();
+    remove_first(&mut rt);
+    assert!(
+        rt.state.sounds.is_empty(),
+        "nothing to hold, but the tile goes"
+    );
+    assert!(rt.state.notice.is_none());
+}
+
+#[test]
+fn a_failed_undo_keeps_the_undo() {
+    let (mut rt, original) = app_with_folder("retry");
+    rt.drop_files(vec![original], Some((200.0, 300.0)));
+    settle(&mut rt);
+    remove_first(&mut rt);
+    let held = rt.state.removed.as_ref().unwrap().held.clone().unwrap();
+    std::fs::remove_file(&held).unwrap();
+    rt.update(|s, _| s.undo_remove());
+    assert!(rt.state.removed.is_some(), "kept, to try again");
+    let notice = rt.state.notice.clone().unwrap();
+    assert!(notice.contains("press Undo again"), "{notice}");
+}
+
+#[test]
+fn many_failed_files_name_three_and_count_the_rest() {
+    let mut rt = app();
+    let errors: Vec<String> = (1..=5).map(|i| format!("File {i} failed.")).collect();
+    rt.update(|s, _| s.loaded((Vec::new(), errors)));
+    assert_eq!(
+        rt.state.notice.as_deref(),
+        Some("File 1 failed.\nFile 2 failed.\nFile 3 failed.\n2 more files didn’t load.")
+    );
+    let errors: Vec<String> = (1..=4).map(|i| format!("File {i} failed.")).collect();
+    rt.update(|s, _| s.loaded((Vec::new(), errors)));
+    assert!(
+        rt.state
+            .notice
+            .as_deref()
+            .unwrap()
+            .ends_with("\n1 more file didn’t load.")
+    );
+}
+
+#[test]
+fn the_board_settles_for_a_moment_after_a_removal() {
+    let (mut rt, original) = app_with_folder("settle");
+    rt.drop_files(vec![original.clone(), original], Some((200.0, 300.0)));
+    settle(&mut rt);
+    assert_eq!(rt.state.sounds.len(), 2);
+    remove_first(&mut rt);
+    // The second tile slid under the pointer: a quick second click doesn't take it too.
+    remove_first(&mut rt);
+    assert_eq!(rt.state.sounds.len(), 1);
+    rt.state.removed.as_mut().unwrap().at -= REMOVE_SETTLE;
+    remove_first(&mut rt);
+    assert!(rt.state.sounds.is_empty());
 }
 
 #[test]
