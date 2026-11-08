@@ -30,6 +30,7 @@
   --graphite: #8a8580;  /* oklch(0.62 0.01 75): switches and faders, which send nothing */
   --led: #fe773d;       /* oklch(0.72 0.18 42) */
   --led-hot: #ff9569;
+  --led-off: #353230;   /* oklch(0.32 0.006 70): an unlit LED */
   --warn: #f3bd5c;      /* oklch(0.83 0.13 80) */
   --danger: #f3606d;    /* oklch(0.68 0.18 18) */
   --mono: ui-monospace, "SF Mono", "Roboto Mono", monospace;
@@ -58,7 +59,7 @@ button { border: 0; background: none; cursor: pointer; touch-action: manipulatio
 [hidden] { display: none !important; }
 
 /* Panel lettering: printed on the body in small capitals. */
-.pill.live span, .tabs button, .card h2, .effect .title, .slider label {
+.pill span, .tabs button, .card h2, .effect .title, .slider label {
   font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 600;
@@ -102,16 +103,19 @@ header { display: flex; align-items: center; gap: 9px; height: 40px; }
 .logo { width: 24px; height: 24px; display: grid; place-items: center; flex: none; color: var(--ink); }
 .logo svg { width: 24px; height: 24px; }
 h1 { flex: 1; font-size: 17px; font-weight: 650; letter-spacing: -0.005em; }
-.pill { display: flex; align-items: center; gap: 7px; height: 28px; max-width: 62%; padding: 0 10px; border-radius: 5px; font-size: 13.5px; font-weight: 500;
-  --tone: var(--muted); color: var(--tone); background: #252320; border: 1px solid rgba(172, 168, 163, 0.35); }
-.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
-.pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pill.warn { --tone: var(--warn); background: #2b251c; border-color: rgba(243, 189, 92, 0.35); }
-.pill.danger { --tone: var(--danger); background: #2c1e1c; border-color: rgba(243, 96, 109, 0.35); }
-/* Live is a lit LED with the word printed beside it: your mic is going into the call. */
-.pill.live { gap: 9px; padding: 0 2px; background: none; border-color: transparent; }
+/* The status, printed on the body like the window's: a lit LED for Live, an unlit one while
+   it's getting going, and a warning triangle for a problem. */
+.pill { display: flex; align-items: center; gap: 9px; height: 28px; max-width: 62%; padding: 0 2px; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); flex: none; }
+.pill svg { display: none; width: 16px; height: 16px; flex: none; }
+.pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.pill.muted span { color: var(--muted); }
+/* Live: your mic is going into the call. */
 .pill.live::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
-.pill.live span { color: var(--ink); }
+.pill.warn::before, .pill.danger::before { display: none; }
+.pill.warn svg, .pill.danger svg { display: block; }
+.pill.warn svg { color: var(--warn); }
+.pill.danger svg { color: var(--danger); }
 
 /* A recessed tray of two keys; the open one stands raised. */
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; margin: 12px 0 20px; padding: 3px; border-radius: 8px; background: var(--well); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6); }
@@ -241,7 +245,7 @@ body.offline main, body.offline .stopbar { opacity: 0.5; pointer-events: none; }
 <header>
   <div class="logo" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2.68" y="6.24" width="1.36" height="3.52" rx=".68" fill="currentColor"/><rect x="5" y="4.32" width="1.36" height="7.36" rx=".68" fill="currentColor"/><rect x="7.32" y="2.88" width="1.36" height="10.24" rx=".68" fill="currentColor"/><rect x="9.64" y="4.8" width="1.36" height="6.4" rx=".68" fill="currentColor"/><rect x="11.96" y="6.56" width="1.36" height="2.88" rx=".68" fill="currentColor"/></svg></div>
   <h1>Warble</h1>
-  <div class="pill muted" id="pill" role="status"><span>Connecting…</span></div>
+  <div class="pill muted" id="pill" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.25 14.25 13.25H1.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.4" r=".9" fill="currentColor"/></svg><span>Connecting…</span></div>
 </header>
 
 <div id="gate" class="gate" hidden>
@@ -346,7 +350,7 @@ function signOut(expired) {
 function pill(label, tone) {
   const p = $("pill");
   p.className = "pill " + tone;
-  p.firstChild.textContent = label;
+  p.querySelector("span").textContent = label;
 }
 
 function toast(text) {
