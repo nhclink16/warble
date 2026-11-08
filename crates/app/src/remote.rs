@@ -61,12 +61,16 @@ impl Remote {
     }
 
     pub fn set_addresses(&mut self, wifi: Option<Ipv4Addr>, tailscale: Option<Ipv4Addr>) {
+        let forced = self.wifi.is_none() && self.tailscale.is_some();
         (self.wifi, self.tailscale) = (wifi, tailscale);
         if tailscale.is_none() {
             self.use_tailscale = false;
         } else if wifi.is_none() {
             // A Tailscale exit node carries all traffic, so Tailscale is the only way in.
             self.use_tailscale = true;
+        } else if forced {
+            // The exit node is off again: back to Wi‑Fi, which the user never switched away from.
+            self.use_tailscale = false;
         }
     }
 }
@@ -481,9 +485,9 @@ fn route(req: Request, answer: &Answer) -> Reply {
     }
 }
 
-/// Reads one request: its head and body, `MAX_REQUEST` bytes at most, within `TIMEOUT` all
-/// told, so a sender can't hold a connection by trickling bytes. An error is the status to
-/// answer with.
+/// Reads one request: its head and body, `MAX_REQUEST` bytes at most. The deadline is checked
+/// after each read, which can itself wait `TIMEOUT`, so a sender trickling bytes holds the
+/// connection for twice `TIMEOUT` at most. An error is the status to answer with.
 fn read_request(stream: &mut impl Read) -> Result<Request, u16> {
     let deadline = Instant::now() + TIMEOUT;
     let mut read = |chunk: &mut [u8]| -> Result<usize, u16> {
@@ -527,8 +531,8 @@ fn read_request(stream: &mut impl Read) -> Result<Request, u16> {
             _ => return Err(400),
         }
     };
-    // Not `head + len`: a huge Content-Length would wrap round.
-    if len > MAX_REQUEST - head {
+    // The head can pass MAX_REQUEST by up to one read, and a huge Content-Length mustn't wrap.
+    if head.saturating_add(len) > MAX_REQUEST {
         return Err(413);
     }
     let mut body = buf.split_off(head);
@@ -779,6 +783,26 @@ mod tests {
         );
         let endless = [b"GET / HTTP/1.1\r\nX: ".as_slice(), &[b'a'; MAX_REQUEST]].concat();
         assert_eq!(request(&endless).err(), Some(400));
+
+        // A network hands out short reads, so the head can end past MAX_REQUEST.
+        struct Reads(Vec<u8>, Vec<usize>);
+        impl Read for Reads {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.1.pop().unwrap_or(0).min(buf.len()).min(self.0.len());
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0.drain(..n);
+                Ok(n)
+            }
+        }
+        let start = b"POST /api/do HTTP/1.1\r\nContent-Length: 30000000\r\nX: ";
+        let fill = vec![b'a'; 20_000 - start.len() - 4];
+        let raw = [start.as_slice(), &fill, b"\r\n\r\n", &[b'b'; 479]].concat();
+        let mut long_head = Reads(raw, vec![4096, 4095, 4096, 4096, 4096]);
+        assert_eq!(
+            read_request(&mut long_head).err(),
+            Some(413),
+            "a 20 KB head with a huge body"
+        );
     }
 
     #[test]
@@ -807,6 +831,19 @@ mod tests {
         // A Tailscale exit node takes the route to the internet: Tailscale is the only way.
         r.set_addresses(None, Some(tailscale));
         assert_eq!(r.address().unwrap(), "http://100.101.2.3:47823");
+        r.set_addresses(Some(wifi), Some(tailscale));
+        assert_eq!(
+            r.address().unwrap(),
+            "http://192.168.1.20:47823",
+            "the exit node went off, and nobody picked Tailscale"
+        );
+        r.use_tailscale = true;
+        r.set_addresses(Some(wifi), Some(tailscale));
+        assert_eq!(
+            r.address().unwrap(),
+            "http://100.101.2.3:47823",
+            "a pick stays"
+        );
         r.set_addresses(None, None);
         assert_eq!(r.address(), None);
     }

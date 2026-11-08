@@ -265,24 +265,30 @@ function toast(text) {
 async function call(method, path, body) {
   if (signedOut) return null;
   const n = ++sent;
+  const used = key;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 4000);
   try {
     const r = await fetch(path, {
       method,
-      headers: body ? { "X-Warble-Key": key, "Content-Type": "application/json" } : { "X-Warble-Key": key },
+      headers: body ? { "X-Warble-Key": used, "Content-Type": "application/json" } : { "X-Warble-Key": used },
       body: body ? JSON.stringify(body) : undefined,
       cache: "no-store",
       signal: abort.signal,
     });
     const data = await r.json().catch(() => ({}));
+    if (signedOut) return null;
     if (r.status === 401) {
-      // An old link: the code this phone last used may still work.
-      if (stored && key !== stored) { key = stored; keep(); return call(method, path, body); }
+      // An old link: the code this phone last used may still work. Only a 401 for that
+      // code signs out; another request sent with the old one may still be on its way back.
+      if (stored && used !== stored) {
+        if (key === used) { key = stored; keep(); }
+        return call(method, path, body);
+      }
       signOut(true);
       return null;
     }
-    if (r.ok) store.set("warble-key", key);
+    if (r.ok) store.set("warble-key", used);
     failures = 0;
     document.body.classList.remove("offline");
     if (!r.ok) { toast(data.error || "That didn’t work. Try again."); if (state) draw(state); return null; }
