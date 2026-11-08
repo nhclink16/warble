@@ -53,7 +53,11 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
     }
     let Some(address) = r.address() else {
         let says = "Connect this PC to Wi‑Fi or a network cable, then open this tab again.";
-        return c.child(problem_line(k, warn(), BODY, says).label(says));
+        return c.child(
+            problem_line(k, warn(), BODY, says)
+                .role("status")
+                .label(says),
+        );
     };
     let link = format!("{address}/#k={}", s.settings.remote_key);
     let network = if r.use_tailscale {

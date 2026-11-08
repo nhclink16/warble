@@ -743,7 +743,8 @@ fn the_phone_remote_says_when_there_is_no_network() {
             .as_deref()
             .is_some_and(|l| l.starts_with("Connect this PC"))
     });
-    assert!(line.is_some(), "read out as one line");
+    let line = line.expect("read out as one line");
+    assert_eq!(line.role, "status", "a status line, not a group");
 }
 
 #[test]
