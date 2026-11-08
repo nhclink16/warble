@@ -1487,6 +1487,8 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         }))
         .on_close(|s: &mut State| s.sound_menu = None)
         .build(&menu(k), layer)
+        // The grid's column sets the width, however long a name's words are.
+        .min_w(0.0)
 }
 
 /// An empty bank: nine dark sockets, numbered for the keys that will play them.

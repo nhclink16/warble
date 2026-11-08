@@ -968,3 +968,26 @@ fn not_now_and_add_hand_focus_on() {
         focus_path(&rt)
     );
 }
+
+#[test]
+fn pads_stay_inside_the_margins_at_the_smallest_window() {
+    let mut rt = Runtime::new(State::mock(), ui::view, (360.0, 540.0), Env::new(true, 1.0));
+    settle(&mut rt);
+    let files = [
+        "Air horn.wav",
+        "Supercalifragilisticexpialidocious_extended_stadium_remix.wav",
+        "Bruh.wav",
+    ];
+    rt.drop_files(files.map(PathBuf::from).to_vec(), Some((200.0, 300.0)));
+    settle(&mut rt);
+    for e in rt.elements() {
+        let pad = e.key.as_deref().is_some_and(|k| {
+            k.strip_prefix("sound-")
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        });
+        if pad {
+            let right = e.rect[0] + e.rect[2];
+            assert!(right <= 360.0 - 16.0 + 0.01, "{} ends at {right}", e.path);
+        }
+    }
+}
