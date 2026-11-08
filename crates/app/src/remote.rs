@@ -21,6 +21,8 @@ use crate::{ui, youtube};
 /// The port phones connect to. When another app has it, the system picks a free one.
 pub const PORT: u16 = 47823;
 const PAGE: &str = include_str!("remote.html");
+/// The face the page prints its panel lettering in: the file the window uses for its own.
+const MARTIAN_MONO: &[u8] = include_bytes!("../assets/fonts/MartianMono-Variable.ttf");
 /// Requests read at once; more connections are closed, and the phone tries again.
 const MAX_CONNECTIONS: usize = 8;
 const MAX_REQUEST: usize = 16 * 1024;
@@ -467,12 +469,17 @@ fn serve(mut stream: TcpStream, answer: &Answer) {
     let _ = stream.write_all(&reply.bytes());
 }
 
-/// The page and its icons for anyone; the API through `answer`, which checks the key.
+/// The page, its icon and its font for anyone; the API through `answer`, which checks the key.
 fn route(req: Request, answer: &Answer) -> Reply {
     let path = req.path.split(['?', '#']).next().unwrap_or_default();
     match (req.method.as_str(), path) {
         ("GET", "/") => Reply::new(200, "text/html; charset=utf-8", PAGE.into()),
         ("GET", "/icon.png") => Reply::new(200, "image/png", icon_png().to_vec()),
+        // Kept a week, so opening the page doesn't fetch the font again each time.
+        ("GET", "/martian-mono.ttf") => Reply {
+            cache: "max-age=604800",
+            ..Reply::new(200, "font/ttf", MARTIAN_MONO.to_vec())
+        },
         (_, p) if p.starts_with("/api/") => {
             let (status, json) = answer(req);
             Reply::new(status, "application/json", json.into_bytes())
@@ -544,12 +551,19 @@ fn read_request(stream: &mut impl Read) -> Result<Request, u16> {
 struct Reply {
     status: u16,
     kind: &'static str,
+    /// `Cache-Control`: `no-store` unless a reply says otherwise.
+    cache: &'static str,
     body: Vec<u8>,
 }
 
 impl Reply {
     fn new(status: u16, kind: &'static str, body: Vec<u8>) -> Reply {
-        Reply { status, kind, body }
+        Reply {
+            status,
+            kind,
+            cache: "no-store",
+            body,
+        }
     }
 
     fn bytes(&self) -> Vec<u8> {
@@ -566,7 +580,7 @@ impl Reply {
             "HTTP/1.1 {} {reason}\r\n\
              Content-Type: {}\r\n\
              Content-Length: {}\r\n\
-             Cache-Control: no-store\r\n\
+             Cache-Control: {}\r\n\
              X-Content-Type-Options: nosniff\r\n\
              Referrer-Policy: no-referrer\r\n\
              Content-Security-Policy: default-src 'self'; script-src 'unsafe-inline'; \
@@ -574,7 +588,8 @@ impl Reply {
              Connection: close\r\n\r\n",
             self.status,
             self.kind,
-            self.body.len()
+            self.body.len(),
+            self.cache
         );
         [head.as_bytes(), &self.body].concat()
     }
@@ -937,6 +952,17 @@ mod tests {
             .read_to_vec()
             .unwrap();
         assert!(icon.starts_with(b"\x89PNG"));
+        let font = ureq::get(format!("{base}/martian-mono.ttf"))
+            .call()
+            .unwrap();
+        assert_eq!(font.headers()["content-type"], "font/ttf");
+        assert_eq!(font.headers()["cache-control"], "max-age=604800");
+        let font = font.into_body().read_to_vec().unwrap();
+        assert!(font.starts_with(&[0, 1, 0, 0]), "a TrueType font");
+        assert!(
+            page.contains("url(/martian-mono.ttf)"),
+            "the page asks for it"
+        );
 
         let denied = ureq::get(format!("{base}/api/state"))
             .header("X-Warble-Key", "nope")
