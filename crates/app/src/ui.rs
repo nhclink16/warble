@@ -1,13 +1,17 @@
 //! The window: a header with the app's status, three tabs, and a drop zone around them.
+//!
+//! The look is a piece of gear on the desk: a graphite body, raised pads with a rim lit from
+//! the top, panel lettering in Martian Mono, and one LED colour ([`led`]) that lights only
+//! while audio is going into the call.
 
 use rune::tok::TextStyle;
 use rune::{
-    Align, Color, Cursor, Cx, Drag, El, Icon, Phase, ScrollSpec, Spring, Tx, col, el, icon, oklch,
-    row, text,
+    Align, Color, Cursor, Cx, Drag, El, Family, Icon, Phase, ScrollSpec, Shadow, Spring, TextCase,
+    Tx, col, el, icon, oklch, row, text,
 };
 use rune_kit::{
-    Button, ButtonVariant, Collapsible, ControlSize, IconButton, IconButtonVariant, Keybind, Kit,
-    MenuItem, PaletteSeed, SegmentedControl, Select, SelectAppearance, StateColors, Switch,
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
+    PaletteFocus, PaletteSeed, Radius, Select, SelectAppearance, StateColors, Switch,
 };
 use warble_engine::{DeviceInfo, Preset};
 
@@ -22,7 +26,8 @@ pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
 pub(crate) const PAD: f32 = 16.0;
 pub(crate) const GAP: f32 = 12.0;
-pub(crate) const LABEL_W: f32 = 58.0;
+/// The width of the printed label in front of a meter or fader.
+pub(crate) const LABEL_W: f32 = 66.0;
 
 // Whole sizes, on rune-kit's 13 (controls) and 11 (captions).
 pub(crate) const TITLE: TextStyle = TextStyle::new(16.0, 650.0);
@@ -30,40 +35,116 @@ pub(crate) const HEADING: TextStyle = TextStyle::new(14.0, 600.0);
 pub(crate) const BODY: TextStyle = TextStyle::new(13.0, 400.0).lh(19.0);
 pub(crate) const LABEL: TextStyle = TextStyle::new(13.0, 500.0);
 pub(crate) const SMALL: TextStyle = TextStyle::new(12.0, 400.0).lh(18.0);
-pub(crate) const TINY: TextStyle = TextStyle::new(11.0, 500.0);
-pub(crate) const NUMBER: TextStyle = TextStyle::new(13.0, 500.0).features("'tnum' 1");
+/// What the voice effect is doing, beside its footswitch.
+const DISPLAY: TextStyle = TextStyle::new(18.0, 650.0);
+/// A name on a pad.
+const PAD_NAME: TextStyle = TextStyle::new(14.0, 600.0).lh(18.0);
+
+/// The bundled faces: Inter for what you read, Martian Mono for what's printed on the panel
+/// (pad numbers, labels, values). Registering any font replaces Rune's built-in Inter, so
+/// Inter comes along.
+pub const FONTS: &[&[u8]] = &[
+    include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../assets/fonts/Inter-Medium.ttf"),
+    include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/MartianMono-Variable.ttf"),
+];
+const PANEL: Family = Family::Named("Martian Mono");
+/// Martian Mono a step narrower than its default, so labels sit like printed ones.
+const PANEL_WIDTH: &str = "'wdth' 87.5";
+/// Values and times: 100%, 0:02.6.
+pub(crate) const NUMBER: TextStyle = TextStyle::new(12.0, 500.0)
+    .family(PANEL)
+    .variations(PANEL_WIDTH);
+/// Panel lettering: section titles and the labels on meters and faders, drawn in capitals
+/// by [`printed`].
+pub(crate) const PRINT: TextStyle = TextStyle::new(10.0, 600.0)
+    .family(PANEL)
+    .variations(PANEL_WIDTH)
+    .tracking(0.4);
+/// The number on a pad, the key you press for it.
+pub(crate) const DIGIT: TextStyle = TextStyle::new(18.0, 600.0)
+    .family(PANEL)
+    .variations(PANEL_WIDTH);
 
 /// Icons beside text, as rune-kit's buttons draw them (a 1.5 point stroke).
 pub(crate) const ICON: f32 = 16.0;
-/// The large glyphs: voice tiles, the drop overlay, the empty board.
-pub(crate) const ICON_TILE: f32 = 20.0;
+/// The large glyphs printed on pads: the voices, the drop pad's plus, the logo.
+pub(crate) const ICON_PAD: f32 = 24.0;
 
-pub(crate) fn bg() -> Color {
-    oklch(0.165, 0.01, 265.0)
+/// The graphite at lightness `l`, for the body, rims, caps and slots.
+pub(crate) fn tone(l: f32) -> Color {
+    oklch(l, 0.006, 70.0)
 }
-pub(crate) fn accent() -> Color {
-    oklch(0.80, 0.14, 165.0)
+/// The graphite body.
+pub(crate) fn bg() -> Color {
+    tone(0.205)
+}
+/// The face of a raised pad or key, a step up from the body.
+pub(crate) fn face() -> Color {
+    tone(0.255)
+}
+/// A recess in the body: the tab tray, empty sockets, the waveform's well, the readout.
+pub(crate) fn recess() -> Color {
+    tone(0.17)
+}
+/// The edge of a control on the body, 3:1 against it: fields, menus and keys.
+fn edge() -> Color {
+    tone(0.54)
+}
+/// The LED, the one colour that means "going into the call". It lights only for the mic
+/// going out (the Live dot), the voice effect and the chosen voice while it's on, a sound
+/// that's playing, and Stop all while one plays. Nothing that stays on this PC (Trim, a
+/// preview, Hear yourself, a selection, a sound just added) uses it.
+pub(crate) fn led() -> Color {
+    oklch(0.72, 0.18, 42.0)
 }
 pub(crate) fn warn() -> Color {
     oklch(0.83, 0.13, 80.0)
 }
 pub(crate) fn danger() -> Color {
-    oklch(0.70, 0.16, 25.0)
+    oklch(0.68, 0.18, 18.0)
 }
-/// The dark ink drawn on the accent.
-pub(crate) fn ink() -> Color {
-    oklch(0.2, 0.02, 200.0)
+/// The level meters' own green, below their amber and red.
+fn signal() -> Color {
+    oklch(0.80, 0.17, 145.0)
 }
 
 pub fn kit() -> Kit {
-    let mut k = Kit::from_palette(PaletteSeed {
-        bg: bg(),
-        fg: oklch(0.955, 0.005, 265.0),
-        accent: accent(),
-    });
-    // Faint text carries hotkeys and device names, so it has to read: 6:1 on a card.
-    k.c.text_faint = oklch(0.68, 0.008, 265.0);
+    let fg = oklch(0.94, 0.008, 80.0);
+    // Switches and selections take a light graphite, not the LED: they send nothing into the
+    // call. Focus rings are the ink colour, which reads on every surface here.
+    let mut k = Kit::from_palette_focus(
+        PaletteSeed {
+            bg: bg(),
+            fg,
+            accent: tone(0.62),
+        },
+        PaletteFocus::Ink,
+    );
+    // Faint text carries hotkeys and device names, so it has to read: 5.5:1 on a pad.
+    k.c.text_faint = oklch(0.68, 0.008, 70.0);
     k.c.icon_faint = k.c.text_faint;
+    // A switch that's on has a dark knob on its lit track, so the knob reads both ways, with
+    // a soft sheen on top rather than a chrome one.
+    k.c.knob_on = face();
+    k.c.depth_top = Color::WHITE.alpha(0.22);
+    // Fields are slots in the body (see `slot`); menus and lists have the controls' edge.
+    k.c.bg_base = recess();
+    k.c.border_strong = edge();
+    k.ring = Some(|c| c.border_strong);
+    // Keys are the pads' graphite, raised by `as_key`; the main one is a lighter key, not a
+    // white pill.
+    k.elevation.button_neutral = vec![Shadow {
+        y: 1.0,
+        blur: 2.0,
+        color: Color::BLACK.alpha(0.45),
+        ..Shadow::default()
+    }];
+    k.c.bg_button_neutral = face();
+    k.c.bg_icon_button_contrast = tone(0.36);
+    k.c.submit_fg = k.c.text_base;
+    k.c.submit_icon = k.c.text_base;
     // The kit's warning and danger in the app's own colours.
     let page = k.c.page;
     let status = |c: Color| StateColors {
@@ -74,7 +155,33 @@ pub fn kit() -> Kit {
     };
     k.c.warning = status(warn());
     k.c.danger = status(danger());
+    // One radius scale: keycaps and meter segments, small keys, keys and fields, pads, trays.
+    k.radius = Radius {
+        xs: 2.0,
+        sm: 4.0,
+        md: 5.0,
+        lg: 6.0,
+        xl: 8.0,
+    };
     k
+}
+
+/// The kit for text fields and pickers: slots in the body with an edge 3:1 against it, so
+/// they read as places to type or choose.
+pub(crate) fn slot(k: &Kit) -> Kit {
+    let mut k = k.clone();
+    k.elevation.button_neutral = vec![Shadow {
+        spread: 1.0,
+        color: edge(),
+        ..Shadow::default()
+    }];
+    k
+}
+
+/// A kit button as a key on the panel: raised like a pad, its rim lit from the top.
+pub(crate) fn as_key(e: El) -> El {
+    e.gradient(Color::WHITE.alpha(0.04), Color::BLACK.alpha(0.12))
+        .border_gradient(1.0, edge(), tone(0.19))
 }
 
 /// `colour` washed over `base`, opaque.
@@ -89,14 +196,228 @@ pub(crate) fn wash(base: Color, colour: Color, amount: f32) -> Color {
     }))
 }
 
-pub(crate) fn card(k: &Kit) -> El {
-    col()
+/// A group of controls on the panel: no box, just a rule above it and room around it.
+pub(crate) fn group(k: &Kit) -> El {
+    col().w_full().pt(16.0).gap(GAP).box_shadow(Shadow {
+        y: 1.0,
+        color: k.c.border_base,
+        inset: true,
+        ..Shadow::default()
+    })
+}
+
+/// Panel lettering, in capitals. The words stay as written for screen readers.
+pub(crate) fn printed(k: &Kit, label: &str) -> El {
+    text(label.to_string())
+        .font(PRINT)
+        .color(k.c.text_muted)
+        .text_case(TextCase::Uppercase)
+}
+
+/// A group's title row: its printed name, and whatever is added at its right (a switch).
+pub(crate) fn title_row(k: &Kit, title: &str) -> El {
+    row()
         .w_full()
-        .padding(14.0)
-        .gap(GAP)
-        .radius(12.0)
-        .fill(k.c.layer_01)
-        .border(1.0, k.c.border_muted)
+        .min_h(24.0)
+        .gap(10.0)
+        .center_y()
+        .child(printed(k, title).color(k.c.text_base))
+}
+
+/// A message on the panel's readout: a dark strip set into the body, for something that
+/// just happened (a file that didn't load, a sound removed or added).
+pub(crate) fn readout(k: &Kit) -> El {
+    row()
+        .w_full()
+        .min_h(40.0)
+        .pl(12.0)
+        .pr(6.0)
+        .py(6.0)
+        .gap(10.0)
+        .radius(k.radius.lg)
+        .fill(recess())
+        .box_shadow(Shadow {
+            y: 1.0,
+            blur: 3.0,
+            color: Color::BLACK.alpha(0.6),
+            inset: true,
+            ..Shadow::default()
+        })
+}
+
+/// A problem on a line: its icon in warn or danger, the words in body ink.
+pub(crate) fn problem_line(k: &Kit, colour: Color, font: TextStyle, says: &str) -> El {
+    row()
+        .w_full()
+        .gap(8.0)
+        .items_start()
+        .child(icon(&WARNING, ICON).color(colour).mt(1.0))
+        .child(
+            text(says.to_string())
+                .font(font)
+                .color(k.c.text_base)
+                .wrap()
+                .grow(1.0)
+                .shrink()
+                .a11y_hidden(),
+        )
+}
+
+/// A section that opens and closes, built as rune-kit's Collapsible is (a `trigger` button
+/// that says whether it's expanded, then the `content` region) but with a printed title.
+/// Its arrow always shows, so a closed section reads as one that opens.
+pub(crate) fn disclosure(
+    k: &Kit,
+    title: &str,
+    open: bool,
+    toggle: fn(&mut State),
+    content: El,
+) -> El {
+    let arrow = if open {
+        k.glyph.triangle_down
+    } else {
+        k.glyph.triangle_right
+    };
+    let trigger = row()
+        .key("trigger")
+        .role("button")
+        .label(title.to_string())
+        .expanded(open)
+        .focusable(true)
+        .w_full()
+        .h(32.0)
+        .gap(6.0)
+        .center_y()
+        .radius(k.radius.md)
+        .cursor(Cursor::Pointer)
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .on_press(toggle)
+        .child(
+            printed(k, title)
+                .color(k.c.text_base)
+                .shrink()
+                .truncate()
+                .a11y_hidden(),
+        )
+        .child(icon(arrow, ICON).color(k.c.icon_muted).a11y_hidden());
+    let mut root = col().role("group").w_full().child(trigger);
+    if open {
+        root = root.child(
+            col()
+                .key("content")
+                .role("region")
+                .label(title.to_string())
+                .w_full()
+                .pt(4.0)
+                .child(content.w_full()),
+        );
+    }
+    root
+}
+
+/// A recessed tray of keys; the chosen one stands raised. The arrow keys move between them,
+/// as in a segmented control.
+pub(crate) fn tray(
+    k: &Kit,
+    label: &str,
+    names: &[&str],
+    current: usize,
+    pick: fn(&mut State, usize),
+) -> El {
+    let mut tray = row()
+        .role("radiogroup")
+        .label(label.to_string())
+        .focus_group()
+        .w_full()
+        .h(36.0)
+        .padding(3.0)
+        .gap(3.0)
+        .radius(k.radius.xl)
+        .fill(recess())
+        .box_shadow(Shadow {
+            y: 1.0,
+            blur: 3.0,
+            color: Color::BLACK.alpha(0.6),
+            inset: true,
+            ..Shadow::default()
+        });
+    for (i, name) in names.iter().enumerate() {
+        let on = i == current;
+        let key = row()
+            .key(format!("segment{i}"))
+            .role("radio")
+            .label(name.to_string())
+            .checked(on)
+            .focusable(true)
+            .focus_selected(on)
+            .position_in_set(i + 1, names.len())
+            .grow(1.0)
+            .shrink()
+            .h_full()
+            .center()
+            .on_press(move |s: &mut State| pick(s, i))
+            .child(
+                printed(k, name)
+                    .font(TextStyle {
+                        size: 11.0,
+                        ..PRINT
+                    })
+                    .color(if on { k.c.text_base } else { k.c.text_muted })
+                    .truncate()
+                    .a11y_hidden(),
+            );
+        tray = tray.child(if on {
+            raise(key, Lamp::Latched).radius(k.radius.md)
+        } else {
+            key.radius(k.radius.md).hover(k.c.hover).press(k.c.pressed)
+        });
+    }
+    tray
+}
+
+/// How lit a pad is: dark, latched (chosen, but nothing is going out), or lit by the LED.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Lamp {
+    Off,
+    Latched,
+    Lit,
+}
+
+/// `e` as a raised pad with a rim lit from the top. A lit pad glows from underneath.
+pub(crate) fn raise(e: El, lamp: Lamp) -> El {
+    let (fill, rim_top, rim_bottom) = match lamp {
+        Lamp::Off => (face(), tone(0.38), tone(0.17)),
+        Lamp::Latched => (tone(0.31), edge(), tone(0.19)),
+        Lamp::Lit => (
+            wash(face(), led(), 0.2),
+            wash(face(), led(), 0.85),
+            wash(face(), led(), 0.3),
+        ),
+    };
+    let e = e
+        .radius(6.0)
+        .fill(fill)
+        .gradient(Color::WHITE.alpha(0.03), Color::BLACK.alpha(0.14))
+        .border_gradient(1.0, rim_top, rim_bottom)
+        .shadow(2.0, 4.0, Color::BLACK.alpha(0.55));
+    if lamp == Lamp::Lit {
+        e.linear_gradient(0.0, [(0.0, led().alpha(0.34)), (1.0, Color::TRANSPARENT)])
+            .shadow(0.0, 18.0, led().alpha(0.3))
+    } else {
+        e
+    }
+}
+
+/// A small LED, lit or dark.
+fn led_dot(lit: bool) -> El {
+    let dot = el().size(7.0, 7.0).radius(3.5).a11y_hidden();
+    if lit {
+        dot.fill(wash(led(), Color::WHITE, 0.2))
+            .shadow(0.0, 8.0, led().alpha(0.9))
+    } else {
+        dot.fill(tone(0.32))
+    }
 }
 
 fn keys(k: &Kit, chord: &str) -> El {
@@ -233,16 +554,6 @@ glyph!(
     )
 );
 glyph!(
-    SPEAKER,
-    concat!(
-        r#"<path d="M2.25 6h2.5L8.5 3v10L4.75 10h-2.5z" "#,
-        stroke!(),
-        r#"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5M13 3.5a6.25 6.25 0 0 1 0 9" "#,
-        stroke!(),
-        "/>"
-    )
-);
-glyph!(
     OPEN,
     concat!(
         r#"<path d="M6.5 3.5H3.5v9h9v-3M9.5 3.5h3v3M12.5 3.5 7.5 8.5" "#,
@@ -311,7 +622,7 @@ pub(crate) fn preset_icon(p: Preset) -> &'static Icon {
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let k = kit();
-    // One keyboard focus ring for every control, in the kit's focus blue.
+    // One keyboard focus ring for every control, in the panel's ink.
     cx.focus_ring(2.0, 2.0, k.c.border_focus);
     let mut layer = Vec::new();
     let body = match s.tab {
@@ -354,72 +665,68 @@ pub(crate) fn scrolling(content: El) -> El {
 }
 
 fn header(s: &State, k: &Kit) -> El {
-    let logo = el()
-        .key("logo")
-        .size(24.0, 24.0)
-        .radius(6.5)
-        .fill(accent())
-        .center()
-        .a11y_hidden()
-        .child(icon(&LOGO, 24.0).color(ink()));
     row()
         .key("header")
-        .h(56.0)
+        .h(52.0)
         .px(PAD)
         .gap(GAP)
         .center_y()
         .child(
             row()
-                .gap(10.0)
+                .gap(8.0)
                 .center_y()
-                .child(logo)
+                .child(
+                    icon(&LOGO, ICON_PAD)
+                        .key("logo")
+                        .color(k.c.text_base)
+                        .a11y_hidden(),
+                )
                 .child(text("Warble").font(TITLE).color(k.c.text_base)),
         )
         .child(el().grow(1.0))
         .child(status_pill(s, k))
 }
 
+/// Running, a lit LED printed "Live": your mic is going into the call. A problem shows its
+/// icon on a key that takes you to Setup, where it's fixed; a device error is too long for
+/// it, so it says "Audio problem" and carries the rest.
 fn status_pill(s: &State, k: &Kit) -> El {
     let (label, tone) = s.status_label();
-    let colour = match tone {
-        "live" => accent(),
-        "warn" => warn(),
-        "danger" => danger(),
-        _ => k.c.text_muted,
-    };
-    // A device error is too long for the pill: it says "Audio problem" and carries the rest.
     let error = s.status.error.as_deref().filter(|_| tone == "danger");
-    let mut pill = row()
+    let pill = row()
         .key("status")
         .role("status")
         .label(match error {
             Some(e) => format!("{label}: {e}"),
             None => label.to_string(),
         })
-        .h(26.0)
-        .px(10.0)
-        .gap(7.0)
+        .h(28.0)
+        .gap(8.0)
         .center_y()
         .shrink()
-        .max_w(230.0)
-        .radius(13.0)
-        .fill(wash(k.c.page, colour, 0.12))
-        .border(1.0, colour.alpha(0.3))
-        .child(el().size(7.0, 7.0).radius(3.5).fill(colour))
-        .child(
-            text(label)
-                .font(LABEL)
-                .color(colour)
-                .truncate()
-                .shrink()
-                .a11y_hidden(),
-        );
+        .max_w(230.0);
+    let words = printed(k, label)
+        .color(k.c.text_base)
+        .truncate()
+        .shrink()
+        .a11y_hidden();
+    let mut pill = match tone {
+        "live" => return pill.child(led_dot(true)).child(words),
+        "warn" => pill.child(icon(&WARNING, ICON).color(warn())).child(words),
+        "danger" => pill
+            .child(icon(&WARNING, ICON).color(danger()))
+            .child(words),
+        _ => pill
+            .child(led_dot(false))
+            .child(words.color(k.c.text_muted)),
+    };
     if let Some(e) = error {
         pill = pill.help(e);
     }
-    // A problem's pill takes you to where it's fixed.
-    if tone != "live" && s.tab != Tab::Setup {
-        pill = pill
+    // A problem's pill is a key that takes you to where it's fixed.
+    if s.tab != Tab::Setup {
+        pill = raise(pill.px(9.0), Lamp::Off)
+            .radius(k.radius.md)
             .help(error.unwrap_or("Open Setup"))
             .focusable(true)
             .cursor(Cursor::Pointer)
@@ -432,30 +739,29 @@ fn status_pill(s: &State, k: &Kit) -> El {
 
 fn tabs(s: &State, k: &Kit) -> El {
     const TABS: [Tab; 3] = [Tab::Voice, Tab::Soundboard, Tab::Setup];
-    let current = TABS.iter().position(|t| *t == s.tab);
-    row().key("tabs").w_full().px(PAD).pb(14.0).child(
-        SegmentedControl::new(&["Voice", "Soundboard", "Setup"], current)
-            .label("Section")
-            .width(None)
-            .on_pick(|s: &mut State, i, _| s.set_tab(TABS[i]))
-            .build(k),
-    )
+    let current = TABS.iter().position(|t| *t == s.tab).unwrap_or(0);
+    row().key("tabs").w_full().px(PAD).pb(12.0).child(tray(
+        k,
+        "Section",
+        &["Voice", "Soundboard", "Setup"],
+        current,
+        |s, i| s.set_tab(TABS[i]),
+    ))
 }
 
+/// Dropping files loads them onto the board: the app dims under one waiting pad.
 fn drop_overlay(k: &Kit) -> El {
     el().key("drop")
-        .pin(Some(8.0), Some(8.0), Some(8.0), Some(8.0))
-        .radius(14.0)
-        .fill(k.c.page.alpha(0.9))
-        .border(2.0, accent())
-        .border_dash(8.0, 5.0)
+        .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+        .fill(k.c.page.alpha(0.86))
         .center()
         .inert()
         .child(
-            col()
-                .gap(10.0)
+            raise(col(), Lamp::Latched)
+                .size(196.0, 132.0)
+                .gap(12.0)
                 .center()
-                .child(icon(&PLUS, ICON_TILE).color(accent()))
+                .child(icon(&PLUS, ICON_PAD).color(k.c.text_base))
                 .child(
                     text("Drop to add sounds")
                         .font(HEADING)
@@ -482,63 +788,96 @@ fn effect_card(s: &State, k: &Kit) -> El {
     } else {
         "Off: people hear your own voice".to_string()
     };
-    // The line wraps rather than cut off its consequence, so the card grows to fit it.
-    let switch = Switch::new(on)
-        .label("Voice effect")
-        .hide_label()
-        .control_size(ControlSize::Regular)
-        .on_toggle(|s: &mut State| s.set_effect(!s.settings.effect))
-        .build(k)
-        .key("effect-switch");
+    // The line wraps rather than cut off its consequence, so the row grows to fit it.
     row()
         .key("effect")
         .w_full()
         .min_h(70.0)
-        .py(12.0)
-        .pl(16.0)
-        .pr(14.0)
-        .gap(GAP)
+        .py(4.0)
+        .gap(14.0)
         .center_y()
-        .radius(12.0)
-        .fill(if on {
-            wash(k.c.layer_01, accent(), 0.09)
-        } else {
-            k.c.layer_01
-        })
-        .border(
-            1.0,
-            if on {
-                accent().alpha(0.4)
-            } else {
-                k.c.border_muted
-            },
-        )
-        .hover(k.c.hover)
-        .press(k.c.pressed)
+        .cursor(Cursor::Pointer)
         .on_press(|s: &mut State| s.set_effect(!s.settings.effect))
+        .child(footswitch(k, on))
         .child(
             col()
                 .grow(1.0)
                 .shrink()
                 .gap(6.0)
-                .child(text("Voice effect").font(HEADING).color(k.c.text_base))
                 .child(
                     row()
                         .w_full()
                         .gap(8.0)
                         .center_y()
-                        .child(keys(k, state::EFFECT_KEY))
-                        .child(
-                            text(detail)
-                                .font(SMALL)
-                                .color(k.c.text_muted)
-                                .wrap()
-                                .grow(1.0)
-                                .shrink(),
-                        ),
+                        .child(printed(k, "Voice effect"))
+                        .child(el().grow(1.0))
+                        .child(keys(k, state::EFFECT_KEY)),
+                )
+                .child(
+                    text(detail)
+                        .font(if on {
+                            DISPLAY
+                        } else {
+                            TextStyle {
+                                weight: 500.0,
+                                ..TITLE
+                            }
+                        })
+                        .color(if on { k.c.text_base } else { k.c.text_muted })
+                        .wrap()
+                        .w_full(),
                 ),
         )
-        .child(switch)
+}
+
+/// The voice effect's footswitch: a round stomp button with an LED ring that lights while
+/// your changed voice is going into the call.
+fn footswitch(k: &Kit, on: bool) -> El {
+    let mut ring = el()
+        .key("effect-switch")
+        .role("switch")
+        .label("Voice effect")
+        .checked(on)
+        .focusable(true)
+        .focus_ring(2.0, 2.5, k.c.border_focus)
+        .size(61.0, 61.0)
+        .radius(30.5)
+        .center()
+        .border(
+            2.0,
+            if on {
+                wash(led(), Color::WHITE, 0.1)
+            } else {
+                tone(0.32)
+            },
+        )
+        .cursor(Cursor::Pointer)
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .press_scale(0.96)
+        .on_press(|s: &mut State| s.set_effect(!s.settings.effect))
+        .child(
+            el().size(52.0, 52.0)
+                .radius(26.0)
+                .center()
+                .fill(tone(0.24))
+                .gradient(Color::WHITE.alpha(0.06), Color::BLACK.alpha(0.25))
+                .border_gradient(1.0, tone(0.40), tone(0.15))
+                .shadow(3.0, 6.0, Color::BLACK.alpha(0.6))
+                .a11y_hidden()
+                .child(
+                    el().size(30.0, 30.0)
+                        .radius(15.0)
+                        .fill(tone(0.5))
+                        .gradient(Color::WHITE.alpha(0.16), Color::BLACK.alpha(0.3))
+                        .border_gradient(1.0, tone(0.72), tone(0.26))
+                        .shadow(1.0, 3.0, Color::BLACK.alpha(0.5)),
+                ),
+        );
+    if on {
+        ring = ring.shadow(0.0, 14.0, led().alpha(0.45));
+    }
+    ring
 }
 
 fn preset_grid(s: &State, k: &Kit) -> El {
@@ -554,51 +893,69 @@ fn preset_grid(s: &State, k: &Kit) -> El {
     for (i, p) in Preset::ALL.into_iter().enumerate() {
         grid = grid.child(preset_tile(k, p, i, p == current, on));
     }
-    grid
+    col().w_full().gap(10.0).child(grid).child(
+        text("Ctrl+Alt+1 to 8 picks a voice.")
+            .font(SMALL)
+            .color(k.c.text_muted),
+    )
 }
 
+/// A voice on a pad, numbered for its hotkey. The chosen one is latched, and lit while
+/// the effect is on.
 fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
-    let lit = selected && on;
-    let (fill, border, glyph) = match (selected, on) {
-        (true, true) => (wash(k.c.layer_01, accent(), 0.16), accent(), accent()),
-        (true, false) => (k.c.layer_02, k.c.border_strong, k.c.text_base),
-        _ => (k.c.layer_01, k.c.border_muted, k.c.icon_muted),
+    let lamp = match (selected, on) {
+        (true, true) => Lamp::Lit,
+        (true, false) => Lamp::Latched,
+        _ => Lamp::Off,
     };
-    let mut tile = col()
+    let ink = if selected {
+        k.c.text_base
+    } else {
+        k.c.text_muted
+    };
+    let mut tile = raise(col(), lamp)
         .key(format!("preset-{}", p.id()))
         .role("radio")
         .label(p.name())
         .checked(selected)
         .focusable(true)
         .focus_selected(selected)
-        .h(78.0)
-        .gap(5.0)
-        .center()
-        .radius(10.0)
-        .fill(fill)
-        .border(if selected { 1.5 } else { 1.0 }, border)
+        .h(84.0)
+        .pt(7.0)
+        .px(8.0)
+        .pb(9.0)
+        .items_center()
+        .justify_between()
         .on_press(move |s: &mut State| s.select_preset(p))
         .press_scale(0.96)
-        .child(icon(preset_icon(p), ICON_TILE).color(glyph).mb(1.0))
+        .child(
+            row()
+                .w_full()
+                .h(12.0)
+                .center_y()
+                .child(
+                    text((i + 1).to_string())
+                        .font(NUMBER)
+                        .color(if selected {
+                            k.c.text_muted
+                        } else {
+                            k.c.text_faint
+                        })
+                        .a11y_hidden(),
+                )
+                .child(el().grow(1.0))
+                .children((lamp == Lamp::Lit).then(|| led_dot(true))),
+        )
+        .child(icon(preset_icon(p), ICON_PAD).color(ink).a11y_hidden())
         .child(
             text(p.name())
-                .font(LABEL)
-                .color(if selected {
-                    k.c.text_base
-                } else {
-                    k.c.text_muted
+                .font(TextStyle {
+                    weight: 600.0,
+                    ..LABEL
                 })
-                .truncate(),
-        )
-        .child(
-            text(state::keycaps(&state::preset_key(i)).join("+"))
-                .font(TINY)
-                .color(if lit {
-                    accent().alpha(0.85)
-                } else {
-                    k.c.text_faint
-                })
-                .truncate(),
+                .color(ink)
+                .truncate()
+                .a11y_hidden(),
         );
     if !selected {
         tile = tile.hover(k.c.hover).press(k.c.pressed);
@@ -608,7 +965,7 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
 
 fn levels_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
     let gain = s.settings.mic_gain;
-    card(k)
+    group(k)
         .key("levels")
         .child(meter_row(k, "Mic", "mic-meter", &s.meters.mic))
         .child(meter_row(k, "Output", "out-meter", &s.meters.out))
@@ -646,12 +1003,12 @@ fn meter_row(k: &Kit, label: &str, key: &str, segments: &[rune::Live<f32>]) -> E
         } else if at >= 0.75 {
             warn()
         } else {
-            accent()
+            signal()
         };
         bar = bar.child(
             el().grow(1.0)
                 .h_full()
-                .radius(1.5)
+                .radius(k.radius.xs)
                 .fill(colour)
                 .live_opacity(live.smooth(Spring::new(0.09, 0.0))),
         );
@@ -661,14 +1018,14 @@ fn meter_row(k: &Kit, label: &str, key: &str, segments: &[rune::Live<f32>]) -> E
         .h(20.0)
         .gap(GAP)
         .center_y()
-        .child(text(label).font(LABEL).color(k.c.text_muted).w(LABEL_W))
+        .child(printed(k, label).w(LABEL_W))
         .child(bar)
         .child(el().w(40.0))
 }
 
 fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
     let on = s.settings.monitor;
-    card(k)
+    group(k)
         .key("monitor")
         .child(
             row()
@@ -680,19 +1037,18 @@ fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
                         .grow(1.0)
                         .shrink()
                         .gap(6.0)
-                        .child(text("Hear yourself").font(HEADING).color(k.c.text_base))
                         .child(
                             row()
-                                .gap(8.0)
+                                .gap(10.0)
                                 .center_y()
-                                .child(keys(k, state::MONITOR_KEY))
-                                .child(
-                                    text("How you sound in the call")
-                                        .font(SMALL)
-                                        .color(k.c.text_muted)
-                                        .truncate()
-                                        .shrink(),
-                                ),
+                                .child(printed(k, "Hear yourself"))
+                                .child(keys(k, state::MONITOR_KEY)),
+                        )
+                        .child(
+                            text("How you sound in the call")
+                                .font(LABEL)
+                                .color(k.c.text_base)
+                                .truncate(),
                         ),
                 )
                 .child(
@@ -731,9 +1087,10 @@ struct Slider {
     set: fn(&mut State, f32),
 }
 
-/// A labelled slider with its value at the end; drag, click the track, or use the arrow keys.
+/// A labelled fader with its value at the end; drag, click the slot, or use the arrow keys.
 fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
-    let (h, knob, bar) = (20.0, 14.0, 4.0);
+    // `knob` is the fader cap's width, which is what travels along the slot.
+    let (h, knob, bar) = (22.0, 12.0, 4.0);
     let w = cx.layout_size(sl.key).map_or(200.0, |s| s[0]);
     let pos = sl.pos.clamp(0.0, 1.0);
     let travel = (w - knob).max(0.0);
@@ -784,34 +1141,34 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
         .child(
             el().absolute(0.0, (h - bar) / 2.0)
                 .size(w, bar)
-                .radius(bar / 2.0)
-                .fill(k.c.layer_03),
+                .radius(k.radius.xs)
+                .fill(tone(0.13))
+                .border_gradient(1.0, tone(0.1), tone(0.3)),
         )
         .child(
             el().absolute(0.0, (h - bar) / 2.0)
                 .size(knob / 2.0 + pos * travel, bar)
-                .radius(bar / 2.0)
-                .fill(if sl.enabled { accent() } else { k.c.icon_faint }),
+                .radius(k.radius.xs)
+                // Off, a fader still works: only its fill dims, so its text stays readable.
+                .fill(if sl.enabled { tone(0.62) } else { tone(0.42) }),
         )
         .child(
-            el().absolute(pos * travel, (h - knob) / 2.0)
-                .size(knob, knob)
-                .radius(knob / 2.0)
-                .fill(k.c.knob)
-                .shadow(1.0, 3.0, Color::BLACK.alpha(0.45)),
+            el().absolute(pos * travel, 1.0)
+                .size(knob, h - 2.0)
+                .radius(k.radius.xs)
+                .center()
+                .fill(tone(0.84))
+                .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
+                .border_gradient(1.0, tone(0.96), tone(0.55))
+                .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))
+                .child(el().size(knob - 4.0, 2.0).fill(tone(0.3))),
         );
     row()
         .w_full()
-        .h(22.0)
+        .h(h)
         .gap(GAP)
         .center_y()
-        .child(
-            text(sl.label)
-                .font(LABEL)
-                .color(k.c.text_muted)
-                .w(LABEL_W)
-                .a11y_hidden(),
-        )
+        .child(printed(k, sl.label).w(LABEL_W).a11y_hidden())
         .child(track)
         .child(
             text(sl.value)
@@ -837,25 +1194,30 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
             .children(notice(s, k))
             .child(empty_state(k));
     }
+    // Stop all comes first, where a hand reaches in a panic, and its rim lights while a
+    // sound is going into the call. The row wraps rather than run off a narrow window.
     let any_playing = !s.status.playing.is_empty();
-    // In a narrow window, Stop all wraps onto its own line rather than being cut off.
+    let stop = Button::new("Stop all")
+        .icon(&STOP)
+        .shortcut(state::STOP_KEY)
+        .disabled(!any_playing)
+        .on_press(|s: &mut State| s.stop_sounds())
+        .build(k);
+    let mut stop = as_key(stop).key("stop-all");
+    if any_playing {
+        stop =
+            stop.border(1.0, wash(led(), Color::WHITE, 0.1))
+                .shadow(0.0, 12.0, led().alpha(0.35));
+    }
     let toolbar = row()
         .key("sound-tools")
         .w_full()
         .flex_wrap()
         .gaps(8.0, 8.0)
-        .justify_between()
         .center_y()
-        .child(row().gap(8.0).child(add_button(k)).child(find_button(k)))
-        .child(
-            Button::new("Stop all")
-                .icon(&STOP)
-                .shortcut(state::STOP_KEY)
-                .disabled(!any_playing)
-                .on_press(|s: &mut State| s.stop_sounds())
-                .build(k)
-                .key("stop-all"),
-        );
+        .child(stop)
+        .child(add_button(k, false))
+        .child(find_button(k));
     let mut grid = el().key("sounds").w_full().equal_columns(3).gaps(8.0, 8.0);
     for (i, sound) in s.sounds.iter().enumerate() {
         grid = grid.child(sound_tile(s, k, layer, i, sound));
@@ -909,8 +1271,8 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
                 .child(toolbar)
                 .children(notice(s, k)),
         )
-        .child(scrolling(col().child(grid)))
-        .child(el().w_full().h(1.0).fill(k.c.border_muted))
+        .child(scrolling(col().pt(2.0).child(grid)))
+        .child(el().w_full().h(1.0).fill(k.c.border_base))
         .child(
             col()
                 .key("sound-footer")
@@ -918,37 +1280,42 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
                 .px(PAD)
                 .py(12.0)
                 .gap(10.0)
-                .fill(k.c.layer_01)
                 .child(volume)
                 .child(hear),
         )
 }
 
 fn find_button(k: &Kit) -> El {
-    Button::new("Find sounds")
-        .on_press(State::open_find)
-        .build(k)
-        .key("find-sounds")
+    as_key(
+        Button::new("Find sounds")
+            .on_press(State::open_find)
+            .build(k),
+    )
+    .key("find-sounds")
 }
 
-fn add_button(k: &Kit) -> El {
-    Button::new("Add sounds…")
-        .icon(&PLUS)
-        .variant(ButtonVariant::Submit)
-        .on_press_tx(|s: &mut State, tx| s.pick_sounds(tx))
-        .build(k)
-        .key("add-sounds")
+/// On an empty board it's the main action, the lighter key. Beside a full board it's a key
+/// like Find sounds, so Stop all is the only one there with an icon.
+fn add_button(k: &Kit, main: bool) -> El {
+    let b = Button::new("Add sounds…");
+    let b = if main {
+        b.icon(&PLUS).variant(ButtonVariant::Submit)
+    } else {
+        b
+    };
+    as_key(
+        b.on_press_tx(|s: &mut State, tx| s.pick_sounds(tx))
+            .build(k),
+    )
+    .key("add-sounds")
 }
 
-/// A tile plays its sound when pressed. Trim and Remove show at its foot on hover, and its
-/// context menu (right-click, the Menu key or Shift+F10) offers both from the keyboard.
+/// A sound on a pad: its number (the key you press, for the first nine) and its name. While
+/// it plays the pad lights up. Pressed, it plays. Trim and Remove show in its top corner
+/// while the pointer is on it, and its context menu (right-click, the Menu key or
+/// Shift+F10) offers both from the keyboard.
 fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) -> El {
     let (id, playing) = (sound.id, s.is_playing(sound.id));
-    let hotkey = if i < 9 {
-        state::keycaps(&state::sound_key(i)).join("+")
-    } else {
-        String::new()
-    };
     // Hover-only, so Tab skips them: the context menu is the keyboard's way in.
     let action = |glyph: &'static Icon, key: String, label: String, help: &str| {
         IconButton::new(glyph)
@@ -961,7 +1328,7 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             .tab_index(-1)
     };
     let actions = row()
-        .pin(None, None, Some(5.0), Some(5.0))
+        .pin(None, Some(8.0), Some(8.0), None)
         .gap(2.0)
         .group_opacity(0.0, 1.0)
         .child(
@@ -982,7 +1349,26 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             )
             .on_press(move |s: &mut State| s.remove_sound(id)),
         );
-    let tile = col()
+    let number = (i < 9).then(|| {
+        text((i + 1).to_string())
+            .font(DIGIT)
+            .color(if playing {
+                k.c.text_base
+            } else {
+                k.c.text_muted
+            })
+            .a11y_hidden()
+    });
+    // What's lit gives way to Trim and Remove under the pointer.
+    let lamp = playing.then(|| {
+        row()
+            .gap(8.0)
+            .center_y()
+            .group_opacity(1.0, 0.0)
+            .child(icon(&PLAYING, ICON).color(k.c.text_base))
+            .child(led_dot(true))
+    });
+    let tile = raise(col(), if playing { Lamp::Lit } else { Lamp::Off })
         .key(format!("sound-{}", id.0))
         .role("button")
         .label(if playing {
@@ -992,20 +1378,10 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         })
         .focusable(true)
         .w_full()
-        .h(72.0)
-        .pt(9.0)
-        .pb(8.0)
+        .h(84.0)
+        .pt(7.0)
+        .pb(9.0)
         .px(10.0)
-        .radius(10.0)
-        .fill(if playing {
-            wash(k.c.layer_01, accent(), 0.16)
-        } else {
-            k.c.layer_01
-        })
-        .border(
-            if playing { 1.5 } else { 1.0 },
-            if playing { accent() } else { k.c.border_muted },
-        )
         .hover_group()
         .hover(k.c.hover)
         .press(k.c.pressed)
@@ -1014,39 +1390,22 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         .on_secondary_press(move |s: &mut State, p, _| s.sound_menu = Some((id, p)))
         .justify_between()
         .child(
+            row()
+                .w_full()
+                .h(22.0)
+                .center_y()
+                .children(number)
+                .child(el().grow(1.0))
+                .children(lamp),
+        )
+        .child(
             text(sound.name.clone())
-                .font(LABEL)
+                .font(PAD_NAME)
                 .color(k.c.text_base)
                 .max_lines(2)
                 .w_full()
                 .help_when_truncated(sound.name.clone())
                 .a11y_hidden(),
-        )
-        .child(
-            row()
-                .w_full()
-                .gap(6.0)
-                .center_y()
-                .group_opacity(1.0, 0.0)
-                .child(
-                    text(hotkey)
-                        .font(TINY)
-                        .color(if playing {
-                            accent().alpha(0.85)
-                        } else {
-                            k.c.text_faint
-                        })
-                        .grow(1.0)
-                        .shrink()
-                        .truncate(),
-                )
-                .child(
-                    icon(if playing { &PLAYING } else { &PLAY }, ICON).color(if playing {
-                        accent()
-                    } else {
-                        k.c.icon_faint
-                    }),
-                ),
         )
         .child(actions);
     let point = s.sound_menu.filter(|(m, _)| *m == id).map(|(_, p)| p);
@@ -1063,41 +1422,72 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         .build(k, layer)
 }
 
+/// An empty bank: nine dark sockets, numbered for the keys that will play them.
 fn empty_state(k: &Kit) -> El {
+    let mut sockets = el()
+        .key("empty-sockets")
+        .w_full()
+        .equal_columns(3)
+        .gaps(8.0, 8.0)
+        .a11y_hidden();
+    for n in 1..=9 {
+        sockets = sockets.child(
+            el().h(72.0)
+                .pt(7.0)
+                .px(10.0)
+                .radius(k.radius.lg)
+                .fill(recess())
+                .border_gradient(1.0, tone(0.14), tone(0.26))
+                .box_shadow(Shadow {
+                    y: 2.0,
+                    blur: 6.0,
+                    color: Color::BLACK.alpha(0.45),
+                    inset: true,
+                    ..Shadow::default()
+                })
+                .child(
+                    text(n.to_string())
+                        .font(TextStyle {
+                            weight: 500.0,
+                            ..DIGIT
+                        })
+                        .color(tone(0.48)),
+                ),
+        );
+    }
     col()
         .key("empty")
         .w_full()
         .grow(1.0)
-        .gap(10.0)
-        .center()
-        .px(24.0)
-        .radius(14.0)
-        .border(1.5, k.c.border_muted)
-        .border_dash(6.0, 5.0)
+        .gap(18.0)
+        .child(sockets)
         .child(
-            el().size(52.0, 52.0)
-                .radius(26.0)
-                .fill(k.c.layer_02)
+            col()
+                .w_full()
+                .gap(8.0)
                 .center()
-                .mb(4.0)
-                .child(icon(&SPEAKER, ICON_TILE).color(k.c.icon_muted)),
-        )
-        .child(text("No sounds yet").font(HEADING).color(k.c.text_base))
-        .child(
-            text("Add WAV, MP3, OGG or FLAC files, or drop them anywhere on this window.")
-                .font(BODY)
-                .color(k.c.text_muted)
-                .align(Align::Center)
-                .wrap()
-                .max_w(250.0),
-        )
-        .child(el().h(6.0))
-        .child(row().gap(8.0).child(add_button(k)).child(find_button(k)))
-        .child(
-            text("The first nine play with Ctrl+Shift+1 to 9.")
-                .font(SMALL)
-                .color(k.c.text_faint)
-                .mt(4.0),
+                .child(text("No sounds yet").font(HEADING).color(k.c.text_base))
+                .child(
+                    text("Add WAV, MP3, OGG or FLAC files, or drop them anywhere on this window.")
+                        .font(BODY)
+                        .color(k.c.text_muted)
+                        .align(Align::Center)
+                        .wrap()
+                        .max_w(280.0),
+                )
+                .child(
+                    row()
+                        .gap(8.0)
+                        .mt(6.0)
+                        .child(add_button(k, true))
+                        .child(find_button(k)),
+                )
+                .child(
+                    text("The first nine play with Ctrl+Shift+1 to 9.")
+                        .font(SMALL)
+                        .color(k.c.text_muted)
+                        .mt(4.0),
+                ),
         )
 }
 
@@ -1111,27 +1501,19 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
     }
     let message = s.notice.clone()?;
     Some(
-        row()
+        readout(k)
             .key("notice")
             .role("alert")
             .label(message.clone())
-            .w_full()
-            .pl(12.0)
-            .pr(6.0)
-            .py(8.0)
-            .gap(8.0)
             .items_start()
-            .radius(10.0)
-            .fill(wash(k.c.page, danger(), 0.12))
-            .border(1.0, danger().alpha(0.35))
-            .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
+            .child(icon(&WARNING, ICON).color(danger()).mt(6.0))
             .child(
                 // One paragraph per line: each file that didn't load, say.
                 col()
                     .gap(4.0)
                     .grow(1.0)
                     .shrink()
-                    .mt(1.0)
+                    .py(5.0)
                     .a11y_hidden()
                     .children(message.lines().map(|line| {
                         text(line.to_string())
@@ -1141,33 +1523,27 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
                             .w_full()
                     })),
             )
-            .child(
-                IconButton::new(&CLOSE)
-                    .variant(IconButtonVariant::GhostMuted)
-                    .control_size(ControlSize::Small)
-                    .label("Dismiss")
-                    .on_press(|s: &mut State| s.notice = None)
-                    .build(k)
-                    .key("dismiss-notice"),
-            ),
+            .child(dismiss(k, "dismiss-notice", |s: &mut State| s.notice = None).mt(2.0)),
     )
+}
+
+/// The readout's close button.
+pub(crate) fn dismiss(k: &Kit, key: &str, on: fn(&mut State)) -> El {
+    IconButton::new(&CLOSE)
+        .variant(IconButtonVariant::GhostMuted)
+        .label("Dismiss")
+        .on_press(on)
+        .build(k)
+        .key(key.to_string())
 }
 
 fn removed_row(k: &Kit, r: &Removed) -> El {
     let says = format!("Removed “{}”.", r.name);
-    row()
+    readout(k)
         .key("removed")
         .role("status")
         .label(says.clone())
-        .w_full()
-        .pl(12.0)
-        .pr(6.0)
-        .py(6.0)
-        .gap(8.0)
         .center_y()
-        .radius(10.0)
-        .fill(k.c.layer_02)
-        .border(1.0, k.c.border_muted)
         .child(
             text(says)
                 .font(SMALL)
@@ -1177,22 +1553,8 @@ fn removed_row(k: &Kit, r: &Removed) -> El {
                 .shrink()
                 .a11y_hidden(),
         )
-        .child(
-            Button::new("Undo")
-                .control_size(ControlSize::Small)
-                .on_press(State::undo_remove)
-                .build(k)
-                .key("undo-remove"),
-        )
-        .child(
-            IconButton::new(&CLOSE)
-                .variant(IconButtonVariant::GhostMuted)
-                .control_size(ControlSize::Small)
-                .label("Dismiss")
-                .on_press(State::forget_removed)
-                .build(k)
-                .key("dismiss-removed"),
-        )
+        .child(as_key(Button::new("Undo").on_press(State::undo_remove).build(k)).key("undo-remove"))
+        .child(dismiss(k, "dismiss-removed", State::forget_removed))
 }
 
 // --- Setup ---
@@ -1209,23 +1571,16 @@ fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
         .child(hotkeys_card(s, k))
 }
 
-/// The warning box at the top of Setup, as the VB-CABLE one: a title and what to do.
+/// A problem at the top of Setup, as the VB-CABLE one: its warning, a title and what to do.
+/// It stands first, above the first group's rule, with no box of its own.
 fn callout(k: &Kit, key: &str, title: &str) -> El {
-    col()
-        .key(key)
-        .w_full()
-        .padding(14.0)
-        .gap(10.0)
-        .radius(12.0)
-        .fill(wash(k.c.page, warn(), 0.1))
-        .border(1.0, warn().alpha(0.4))
-        .child(
-            row()
-                .gap(8.0)
-                .center_y()
-                .child(icon(&WARNING, ICON).color(warn()))
-                .child(text(title.to_string()).font(HEADING).color(k.c.text_base)),
-        )
+    col().key(key).w_full().gap(8.0).pb(6.0).child(
+        row()
+            .gap(8.0)
+            .center_y()
+            .child(icon(&WARNING, ICON).color(warn()))
+            .child(text(title.to_string()).font(HEADING).color(k.c.text_base)),
+    )
 }
 
 /// Hotkeys that didn't register, one line per reason, where Setup opens.
@@ -1237,13 +1592,18 @@ fn hotkeys_callout(s: &State, k: &Kit) -> Option<El> {
     Some(
         callout(k, "hotkeys-callout", "Some hotkeys don’t work").children(
             problems.into_iter().map(|says| {
-                col().role("alert").label(says.clone()).w_full().child(
-                    text(says)
-                        .font(BODY)
-                        .color(k.c.text_muted)
-                        .wrap()
-                        .a11y_hidden(),
-                )
+                col()
+                    .role("alert")
+                    .label(says.clone())
+                    .w_full()
+                    .pl(24.0)
+                    .child(
+                        text(says)
+                            .font(BODY)
+                            .color(k.c.text_base)
+                            .wrap()
+                            .a11y_hidden(),
+                    )
             }),
         ),
     )
@@ -1257,11 +1617,12 @@ fn cable_callout(k: &Kit) -> El {
                  Install it, restart your PC, then open Warble again.",
             )
             .font(BODY)
-            .color(k.c.text_muted)
-            .wrap(),
+            .color(k.c.text_base)
+            .wrap()
+            .pl(24.0),
         )
         .child(
-            row().child(
+            row().pl(24.0).pt(2.0).child(as_key(
                 Button::new("Get VB-CABLE")
                     .icon(&OPEN)
                     .variant(ButtonVariant::Submit)
@@ -1273,9 +1634,8 @@ fn cable_callout(k: &Kit) -> El {
                             ));
                         }
                     })
-                    .build(k)
-                    .key("get-cable"),
-            ),
+                    .build(k),
+            ).key("get-cable")),
         )
 }
 
@@ -1286,29 +1646,16 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     let at = error.and_then(|e| error_picker(s, e));
     let error_line = |under: Option<Picker>| {
         error.filter(|_| at == under).map(|e| {
-            row()
+            problem_line(k, danger(), SMALL, e)
                 .key("device-error")
                 .role("alert")
                 .label(e.to_string())
-                .w_full()
-                .gap(8.0)
-                .items_start()
-                .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
-                .child(
-                    text(e.to_string())
-                        .font(SMALL)
-                        .color(k.c.text_base)
-                        .wrap()
-                        .grow(1.0)
-                        .shrink()
-                        .a11y_hidden(),
-                )
         })
     };
-    card(k)
+    group(k)
         .key("devices")
         .gap(14.0)
-        .child(text("Devices").font(HEADING).color(k.c.text_base))
+        .child(title_row(k, "Devices"))
         .child(
             picker(
                 s,
@@ -1376,18 +1723,6 @@ fn error_picker(s: &State, e: &str) -> Option<Picker> {
     .map(|(p, _)| p)
 }
 
-/// A reference section of Setup that opens and closes, titled like the cards around it.
-fn section(k: &Kit, title: &str, open: bool, toggle: fn(&mut State), content: El) -> El {
-    let mut heading = k.clone();
-    heading.ty.text_small_medium = HEADING;
-    Collapsible::new(title, open)
-        // Its arrow always shows, so a closed section reads as one that opens.
-        .state(rune_kit::State::Hover)
-        .on_toggle(toggle)
-        .child(content.w_full().pt(6.0))
-        .build(&heading)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn picker(
     s: &State,
@@ -1433,7 +1768,7 @@ fn picker(
         .on_choose(move |s: &mut State, v: &str, _| {
             s.set_device(which, (v != default).then(|| v.to_string()))
         })
-        .build(k, layer)
+        .build(&slot(k), layer)
         .w_full();
     // With the default chosen, say which device that is.
     let using = using.filter(|_| chosen.is_none()).map(|u| {
@@ -1455,18 +1790,19 @@ fn picker(
 }
 
 fn discord_card(s: &State, k: &Kit) -> El {
+    // The steps are a real sequence, numbered as the panel prints its numbers.
     let step = |n: &str, line: &str| {
         row()
             .w_full()
             .gap(10.0)
             .items_start()
             .child(
-                el().size(18.0, 18.0)
-                    .radius(9.0)
-                    .fill(k.c.layer_03)
-                    .center()
-                    .a11y_hidden()
-                    .child(text(n.to_string()).font(TINY).color(k.c.text_base)),
+                text(n.to_string())
+                    .font(NUMBER)
+                    .color(k.c.text_muted)
+                    .w(14.0)
+                    .mt(1.0)
+                    .a11y_hidden(),
             )
             .child(
                 text(line.to_string())
@@ -1479,6 +1815,7 @@ fn discord_card(s: &State, k: &Kit) -> El {
     };
     let steps = col()
         .gap(GAP)
+        .pb(4.0)
         .child(step("1", "Open Settings > Voice & Video."))
         .child(step("2", "Set Input device to “CABLE Output (VB-Audio Virtual Cable)”."))
         .child(step("3", "Turn off Noise suppression (Krisp) and Echo cancellation, or Discord strips the effects out."))
@@ -1495,7 +1832,7 @@ fn discord_card(s: &State, k: &Kit) -> El {
                         .shrink(),
                 ),
         );
-    card(k).key("discord").child(section(
+    group(k).key("discord").pt(8.0).child(disclosure(
         k,
         "Set up Discord",
         s.discord_open,
@@ -1534,7 +1871,7 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
             vec!["Ctrl".into(), "Shift".into(), "1–9".into()],
         ),
     ];
-    let mut c = col().gap(10.0).child(
+    let mut c = col().gap(10.0).pb(4.0).child(
         text("These work while you’re in a game or call.")
             .font(SMALL)
             .color(k.c.text_muted),
@@ -1558,26 +1895,11 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
         );
         // The callout at the top of Setup is the alert; these lines say it again in place.
         for says in hotkey_problems(s, Some(&chords)) {
-            line = line.child(
-                row()
-                    .label(says.clone())
-                    .gap(6.0)
-                    .items_start()
-                    .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
-                    .child(
-                        text(says)
-                            .font(SMALL)
-                            .color(k.c.text_base)
-                            .wrap()
-                            .grow(1.0)
-                            .shrink()
-                            .a11y_hidden(),
-                    ),
-            );
+            line = line.child(problem_line(k, danger(), SMALL, &says).label(says.clone()));
         }
         c = c.child(line);
     }
-    card(k).key("hotkeys").child(section(
+    group(k).key("hotkeys").pt(8.0).child(disclosure(
         k,
         "Hotkeys",
         s.hotkeys_open,

@@ -4,17 +4,17 @@ use std::time::Duration;
 
 use qrcodegen::{QrCode, QrCodeEcc};
 use rune::{Color, El, Tx, col, el, icon, oklch, row, text};
-use rune_kit::{Button, ControlSize, Kit, SegmentedControl, Switch};
+use rune_kit::{Button, ControlSize, Kit, Switch};
 
 use crate::state::State;
-use crate::ui::{BODY, HEADING, ICON, SMALL, WARNING, card, danger};
+use crate::ui::{BODY, ICON, SMALL, WARNING, as_key, danger, group, title_row, tray};
 
 /// How long a copied link, key and all, stays on the clipboard.
 const COPIED_FOR: Duration = Duration::from_secs(2 * 60);
 
 pub fn remote_card(s: &State, k: &Kit) -> El {
     let on = s.settings.remote;
-    let c = card(k).key("remote").child(
+    let c = group(k).key("remote").child(
         row()
             .w_full()
             .gap(10.0)
@@ -23,8 +23,8 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                 col()
                     .grow(1.0)
                     .shrink()
-                    .gap(3.0)
-                    .child(text("Phone remote").font(HEADING).color(k.c.text_base))
+                    .gap(2.0)
+                    .child(title_row(k, "Phone remote"))
                     .child(
                         text("Play sounds and change your voice from your\u{a0}phone.")
                             .font(SMALL)
@@ -72,12 +72,14 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
     let mut c = c;
     if r.wifi.is_some() && r.tailscale.is_some() {
         c = c.child(
-            SegmentedControl::new(&["Wi‑Fi", "Tailscale"], Some(usize::from(r.use_tailscale)))
-                .label("Connect over")
-                .width(None)
-                .on_pick(|s: &mut State, i, _| s.remote.use_tailscale = i == 1)
-                .build(k)
-                .key("remote-network"),
+            tray(
+                k,
+                "Connect over",
+                &["Wi‑Fi", "Tailscale"],
+                usize::from(r.use_tailscale),
+                |s, i| s.remote.use_tailscale = i == 1,
+            )
+            .key("remote-network"),
         );
     }
     c.child(
@@ -85,7 +87,7 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             .w_full()
             .gap(14.0)
             .items_start()
-            .child(qr(&link))
+            .child(qr(k, &link))
             .child(
                 col()
                     .grow(1.0)
@@ -104,13 +106,15 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                     )
                     .child(
                         row().child(
-                            Button::new("Copy link")
-                                .help("Copies the link with its code. Warble clears it from the clipboard after 2 minutes.")
-                                .on_press_tx(move |_: &mut State, tx: &mut Tx| {
-                                    tx.copy_secret(link.clone(), COPIED_FOR);
-                                })
-                                .build(k)
-                                .key("copy-link"),
+                            as_key(
+                                Button::new("Copy link")
+                                    .help("Copies the link with its code. Warble clears it from the clipboard after 2 minutes.")
+                                    .on_press_tx(move |_: &mut State, tx: &mut Tx| {
+                                        tx.copy_secret(link.clone(), COPIED_FOR);
+                                    })
+                                    .build(k),
+                            )
+                            .key("copy-link"),
                         ),
                     ),
             ),
@@ -131,10 +135,12 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             .gap(10.0)
             .center_y()
             .child(
-                Button::new("Sign out all phones")
-                    .on_press(State::forget_phones)
-                    .build(k)
-                    .key("new-code"),
+                as_key(
+                    Button::new("Sign out all phones")
+                        .on_press(State::forget_phones)
+                        .build(k),
+                )
+                .key("new-code"),
             )
             .child(
                 text("Shows a new code. Scan it again on the phones you\u{a0}keep.")
@@ -170,7 +176,7 @@ const MODULE: f32 = 4.0;
 const QUIET: i32 = 2;
 
 /// The link as a QR code: black runs on white, one rectangle per run of a row.
-fn qr(link: &str) -> El {
+fn qr(k: &Kit, link: &str) -> El {
     let Ok(code) = QrCode::encode_text(link, QrCodeEcc::Low) else {
         return el();
     };
@@ -181,8 +187,9 @@ fn qr(link: &str) -> El {
         .role("img")
         .label("QR code with the link for your phone")
         .size(side, side)
-        .radius(8.0)
-        .fill(oklch(1.0, 0.0, 0.0));
+        .radius(k.radius.lg)
+        .fill(oklch(1.0, 0.0, 0.0))
+        .shadow(2.0, 4.0, Color::BLACK.alpha(0.55));
     for y in 0..n {
         let mut x = 0;
         while x < n {

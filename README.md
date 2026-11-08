@@ -110,3 +110,6 @@ drawing, regenerate it with `WARBLE_WRITE_ICO=1 cargo test -p warble`.
 
 Layout: `crates/dsp` (voice effects), `crates/engine` (devices, audio graph, soundboard), `crates/app` (the Rune UI).
 Rune is pre-release and pinned to one commit in the root `Cargo.toml`. Bump it on purpose, not casually.
+
+Fonts: [Inter](https://rsms.me/inter/) and [Martian Mono](https://github.com/evilmartians/mono), both under the
+SIL Open Font License 1.1, are bundled into the app. Their licences are in `crates/app/assets/fonts/`.
