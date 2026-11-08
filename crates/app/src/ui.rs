@@ -980,7 +980,12 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
                 format!("Remove {}", sound.name),
                 "Remove",
             )
-            .on_press(move |s: &mut State| s.remove_sound(id)),
+            // A quick second click lands on the tile that slid into this one's place.
+            .on_press(move |s: &mut State| {
+                if !s.just_removed() {
+                    s.remove_sound(id);
+                }
+            }),
         );
     let tile = col()
         .key(format!("sound-{}", id.0))
@@ -1009,7 +1014,11 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         .hover_group()
         .hover(k.c.hover)
         .press(k.c.pressed)
-        .on_press(move |s: &mut State| s.play(id))
+        .on_press(move |s: &mut State| {
+            if !s.just_removed() {
+                s.play(id);
+            }
+        })
         .press_scale(0.96)
         .on_secondary_press(move |s: &mut State, p, _| s.sound_menu = Some((id, p)))
         .justify_between()

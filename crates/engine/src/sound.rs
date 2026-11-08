@@ -34,6 +34,12 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         )
     };
     let no_audio = || format!("There’s no sound in “{name}”. Try another file.");
+    // The file is fine, but its kind of audio (Opus, ALAC) isn't one Warble decodes.
+    let codec = || {
+        format!(
+            "Warble can’t play the kind of audio in “{name}”. Save it as MP3 or WAV, then add it again."
+        )
+    };
 
     let file = File::open(path).map_err(|e| match e.kind() {
         ErrorKind::NotFound => {
@@ -65,10 +71,10 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         .codec_params
         .as_ref()
         .and_then(|p| p.audio())
-        .ok_or_else(unsupported)?;
+        .ok_or_else(codec)?;
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default())
-        .map_err(|_| unsupported())?;
+        .map_err(|_| codec())?;
 
     let mut samples: Vec<f32> = Vec::new();
     let mut rate = 0;
@@ -88,7 +94,7 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         let audio = match decoder.decode(&packet) {
             Ok(audio) => audio,
             Err(Error::DecodeError(_) | Error::IoError(_)) => continue,
-            Err(_) => return Err(unsupported()),
+            Err(_) => return Err(codec()),
         };
         if rate == 0 {
             rate = audio.spec().rate();
