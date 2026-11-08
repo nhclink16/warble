@@ -535,3 +535,73 @@ fn a_device_error_is_short_in_the_pill_and_whole_under_its_picker() {
         "under the microphone"
     );
 }
+
+/// Clearly the LED's colour (within 15° of its hue), solid or washed into a pad.
+fn is_led(c: rune::Color) -> bool {
+    let [_, a, b, alpha] = c.to_oklab();
+    let hue = b.atan2(a).to_degrees();
+    alpha > 0.05 && a.hypot(b) > 0.03 && (hue - 42.0).abs() < 15.0
+}
+
+/// What's lit by the LED below the header (whose Live dot is always lit while running).
+fn lit(rt: &Runtime<State>) -> Vec<String> {
+    rt.elements()
+        .into_iter()
+        .filter(|e| !e.path.contains("/header"))
+        .filter(|e| is_led(e.fill) || e.text_color.is_some_and(is_led))
+        .map(|e| e.path)
+        .collect()
+}
+
+fn scene(rt: &mut Runtime<State>, name: &str) {
+    let (_, set) = ui::SCENES.iter().find(|(n, _)| *n == name).unwrap();
+    rt.update(|s, _| set(s));
+    settle(rt);
+}
+
+#[test]
+fn only_audio_going_into_the_call_lights_the_led() {
+    let mut rt = app();
+    scene(&mut rt, "voice");
+    let on = lit(&rt);
+    assert!(
+        !on.is_empty(),
+        "the chosen voice lights while the effect is on"
+    );
+    assert!(on.iter().all(|p| p.contains("/preset-deep")), "{on:?}");
+
+    rt.update(|s, _| s.set_effect(false));
+    settle(&mut rt);
+    assert_eq!(
+        lit(&rt),
+        Vec::<String>::new(),
+        "nothing lights with the effect off"
+    );
+
+    let mut rt = app();
+    scene(&mut rt, "soundboard");
+    let playing = rt.state.status.playing[0].0;
+    let on = lit(&rt);
+    assert!(!on.is_empty(), "a playing sound lights");
+    let pad = format!("/sound-{playing}");
+    assert!(on.iter().all(|p| p.contains(&pad)), "{on:?}");
+
+    // Previews and Trim play in your headphones only; Setup sends nothing.
+    for name in ["find", "trim", "setup", "remote"] {
+        let mut rt = app();
+        scene(&mut rt, name);
+        assert_eq!(lit(&rt), Vec::<String>::new(), "{name}");
+    }
+}
+
+#[test]
+fn the_phone_remote_says_when_there_is_no_network() {
+    let mut rt = app();
+    scene(&mut rt, "remote-no-network");
+    let line = rt.elements().into_iter().find(|e| {
+        e.label
+            .as_deref()
+            .is_some_and(|l| l.starts_with("Connect this PC"))
+    });
+    assert!(line.is_some(), "read out as one line");
+}
