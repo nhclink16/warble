@@ -681,6 +681,20 @@ fn only_audio_going_into_the_call_lights_the_led() {
         scene(&mut rt, name);
         assert_eq!(lit(&rt), Vec::<String>::new(), "{name}");
     }
+
+    // With the effect on but nothing going out, the chosen voice is only latched.
+    for name in ["no-cable", "audio-problem", "starting"] {
+        let mut rt = app();
+        if name == "starting" {
+            rt.update(|s, _| s.status.running = false);
+        } else {
+            scene(&mut rt, name);
+        }
+        rt.update(|s, _| s.set_tab(Tab::Voice));
+        settle(&mut rt);
+        assert!(rt.state.settings.effect);
+        assert_eq!(lit(&rt), Vec::<String>::new(), "{name}");
+    }
 }
 
 #[test]

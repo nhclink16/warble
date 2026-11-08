@@ -845,6 +845,9 @@ fn voice(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
 
 fn effect_card(s: &State, k: &Kit) -> El {
     let on = s.settings.effect;
+    // Lit only while the changed voice really goes out: not while the engine is starting,
+    // can't find VB-CABLE or has an audio problem.
+    let live = on && s.status.running;
     let detail = if on {
         format!("{} voice", s.settings.preset().name())
     } else {
@@ -860,7 +863,7 @@ fn effect_card(s: &State, k: &Kit) -> El {
         .center_y()
         .cursor(Cursor::Pointer)
         .on_press(|s: &mut State| s.set_effect(!s.settings.effect))
-        .child(footswitch(k, on))
+        .child(footswitch(k, on, live))
         .child(
             col()
                 .grow(1.0)
@@ -895,8 +898,9 @@ fn effect_card(s: &State, k: &Kit) -> El {
 }
 
 /// The voice effect's footswitch: a round stomp button with an LED ring that lights while
-/// your changed voice is going into the call.
-fn footswitch(k: &Kit, on: bool) -> El {
+/// your changed voice is going into the call (`live`). On but not live, the ring is a key's
+/// edge.
+fn footswitch(k: &Kit, on: bool, live: bool) -> El {
     let mut ring = el()
         .key("effect-switch")
         .role("switch")
@@ -909,8 +913,10 @@ fn footswitch(k: &Kit, on: bool) -> El {
         .center()
         .border(
             2.0,
-            if on {
+            if live {
                 wash(led(), Color::WHITE, 0.1)
+            } else if on {
+                edge()
             } else {
                 tone(0.32)
             },
@@ -938,14 +944,14 @@ fn footswitch(k: &Kit, on: bool) -> El {
                         .shadow(1.0, 3.0, Color::BLACK.alpha(0.5)),
                 ),
         );
-    if on {
+    if live {
         ring = ring.shadow(0.0, 14.0, led().alpha(0.45));
     }
     ring
 }
 
 fn preset_grid(s: &State, k: &Kit) -> El {
-    let (on, current) = (s.settings.effect, s.settings.preset());
+    let (live, current) = (s.settings.effect && s.status.running, s.settings.preset());
     let mut grid = el()
         .key("presets")
         .w_full()
@@ -955,7 +961,7 @@ fn preset_grid(s: &State, k: &Kit) -> El {
         .label("Voice")
         .focus_group();
     for (i, p) in Preset::ALL.into_iter().enumerate() {
-        grid = grid.child(preset_tile(k, p, i, p == current, on));
+        grid = grid.child(preset_tile(k, p, i, p == current, live));
     }
     col().w_full().gap(10.0).child(grid).child(
         text("Ctrl+Alt+1 to 8 picks a voice.")
@@ -965,9 +971,9 @@ fn preset_grid(s: &State, k: &Kit) -> El {
 }
 
 /// A voice on a pad, numbered for its hotkey. The chosen one is latched, and lit while
-/// the effect is on.
-fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
-    let lamp = match (selected, on) {
+/// the changed voice is going into the call (`live`).
+fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, live: bool) -> El {
+    let lamp = match (selected, live) {
         (true, true) => Lamp::Lit,
         (true, false) => Lamp::Latched,
         _ => Lamp::Off,
