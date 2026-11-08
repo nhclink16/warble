@@ -166,6 +166,7 @@ fn find_sounds_opens_from_the_board_and_its_sites_open_in_the_browser() {
     assert!(rt.state.find.open);
     assert!(rt.find("search-field").is_some() && rt.find("youtube").is_some());
     assert!(rt.find("search-button").is_some());
+    tap(&mut rt, "sites-section/trigger");
     tap(&mut rt, "site-1");
     assert_eq!(rt.take_url_requests(), ["https://freesound.org/"]);
     tap(&mut rt, "back");

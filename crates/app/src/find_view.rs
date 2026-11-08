@@ -1,41 +1,60 @@
 //! The Find sounds page (search, YouTube link, good sites, Freesound key) and the trim editor,
 //! both shown in place of the Soundboard tab's board.
 
-use rune::{Align, Cursor, Cx, Drag, El, Phase, Tx, col, el, icon, oklch, row, text};
-use rune_kit::{Button, ButtonVariant, IconButton, IconButtonVariant, Kit, Spinner, TextInput};
+use rune::{Align, Cursor, Cx, Drag, El, Key, KeyEvent, Phase, Tx, col, el, icon, row, text};
+use rune_kit::{
+    Button, ButtonVariant, Collapsible, ControlSize, IconButton, IconButtonVariant, Kit, Spinner,
+    TextInput,
+};
 
 use crate::find::{Find, YouTube};
 use crate::library::{FREESOUND_KEY_URL, Hit, SITES};
-use crate::state::State;
+use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
-    BACK, CHECK, HEADING, HEADPHONES, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
-    SMALL, STOP, WARNING, accent, card, danger, notice, scrolling, warn, wash,
+    BACK, BODY, CHECK, HEADING, HEADPHONES, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
+    SMALL, STOP, TITLE, WARNING, accent, card, danger, notice, scrolling, warn, wash,
 };
 use crate::youtube;
 
+/// Escape goes back from the Find sounds and Trim pages. The pages and their text fields use
+/// it; so can the window's `on_key`, for when nothing has focus.
+pub fn escape_goes_back(s: &mut State, ev: &KeyEvent, _: &mut Tx) -> bool {
+    if ev.key != Key::Escape || s.tab != Tab::Soundboard {
+        return false;
+    }
+    if s.trim.is_some() {
+        s.close_trim();
+    } else if s.find.open {
+        s.close_find();
+    } else {
+        return false;
+    }
+    true
+}
+
 /// A page's top line: back to the board, and what the page is.
 fn page_bar(k: &Kit, title: &str, back: fn(&mut State)) -> El {
+    // Equal side slots keep the title in the middle, whatever the Back button measures.
+    let side = || row().w(0.0).grow(1.0).center_y();
     row()
         .key("page-bar")
         .w_full()
         .px(PAD - 6.0)
         .pb(10.0)
-        .gap(4.0)
         .center_y()
         .child(
-            Button::new("Back")
-                .icon(&BACK)
-                .variant(ButtonVariant::GhostMuted)
-                .on_press(back)
-                .build(k)
-                .key("back"),
+            side().child(
+                Button::new("Back")
+                    .icon(&BACK)
+                    .variant(ButtonVariant::GhostMuted)
+                    .on_press(back)
+                    .build(k)
+                    .key("back"),
+            ),
         )
-        .child(el().grow(1.0))
-        .child(text(title.to_string()).font(HEADING).color(k.c.text_base))
-        .child(el().grow(1.0))
-        // Balances the back button, so the title sits in the middle.
-        .child(el().w(64.0))
+        .child(text(title.to_string()).font(TITLE).color(k.c.text_base))
+        .child(side())
 }
 
 /// A short line with a spinner, for work under way.
@@ -49,14 +68,16 @@ fn working(k: &Kit, key: &str, what: &str) -> El {
         .child(text(what.to_string()).font(SMALL).color(k.c.text_muted))
 }
 
-/// A short line about a problem.
-fn problem(k: &Kit, key: &str, colour: rune::Color, message: &str) -> El {
+/// A short line about a problem: something that failed, read out at once, or (`failed` false)
+/// a warning beside results, read out when the reader is idle.
+fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
     row()
         .key(key.to_string())
+        .role(if failed { "alert" } else { "status" })
         .w_full()
         .gap(8.0)
         .items_start()
-        .child(icon(&WARNING, 14.0).color(colour).mt(1.0))
+        .child(icon(&WARNING, 16.0 /* ICON */).color(if failed { danger() } else { warn() }))
         .child(
             text(message.to_string())
                 .font(SMALL)
@@ -103,7 +124,7 @@ pub fn find_page(s: &State, k: &Kit) -> El {
             .radius(10.0)
             .fill(wash(k.c.page, accent(), 0.1))
             .border(1.0, accent().alpha(0.35))
-            .child(icon(&CHECK, 14.0).color(accent()))
+            .child(icon(&CHECK, 16.0 /* ICON */).color(accent()))
             .child(
                 text(format!("Added “{name}” to your soundboard."))
                     .font(SMALL)
@@ -117,6 +138,8 @@ pub fn find_page(s: &State, k: &Kit) -> El {
         .key("find")
         .grow(1.0)
         .min_h(0.0)
+        .on_key(escape_goes_back)
+        .focus_return("find-sounds")
         .child(page_bar(k, "Find sounds", State::close_find))
         .child(scrolling(
             col()
@@ -126,8 +149,8 @@ pub fn find_page(s: &State, k: &Kit) -> El {
                 .child(search_box(s, k))
                 .children(results(s, f, k))
                 .child(youtube_card(f, k))
-                .child(sites_card(k))
-                .child(key_card(f, k)),
+                .child(sites_card(f, k))
+                .children((!f.key_first).then(|| key_card(f, k))),
         ))
 }
 
@@ -140,6 +163,7 @@ fn search_box(s: &State, k: &Kit) -> El {
         .width(None)
         .on_edit(|s: &mut State| &mut s.find.query)
         .on_submit(|s: &mut State, _| s.search())
+        .on_key(escape_goes_back)
         .build(k)
         .key("search-field");
     let mut c = col().key("search").w_full().gap(8.0).child(
@@ -149,19 +173,40 @@ fn search_box(s: &State, k: &Kit) -> El {
             .center_y()
             .child(col().grow(1.0).shrink().min_w(0.0).child(field))
             .child(
+                // As tall as the field beside it, with its corners.
                 Button::new("Search")
+                    .control_size(ControlSize::Large)
                     .disabled(f.query.text.trim().is_empty())
                     .on_press(State::search)
                     .build(k)
+                    .radius(k.radius.md)
                     .key("search-button"),
             ),
     );
     if s.settings.freesound_key.is_empty() {
         c = c.child(
-            text("Searching Myinstants only. Add a Freesound key below for more.")
+            text("Searching Myinstants only.")
                 .font(SMALL)
                 .color(k.c.text_faint)
                 .wrap(),
+        );
+    }
+    if f.key_first {
+        c = c.child(
+            Collapsible::new("Add a Freesound key", f.key_open)
+                .state(OPENABLE)
+                .on_toggle(|s: &mut State| s.find.key_open = !s.find.key_open)
+                .child(
+                    col()
+                        .w_full()
+                        .gap(8.0)
+                        .pb(4.0)
+                        .child(text(KEY_WHY).font(SMALL).color(k.c.text_muted).wrap())
+                        .child(key_field(f, k))
+                        .child(get_key_button(k)),
+                )
+                .build(k)
+                .key("freesound"),
         );
     }
     c
@@ -174,16 +219,31 @@ fn results(s: &State, f: &Find, k: &Kit) -> Option<El> {
     let query = f.searched.as_ref()?;
     if f.hits.is_empty() {
         return Some(match &f.problem {
-            Some(p) => problem(k, "search-problem", danger(), p),
-            None => text(format!("No sounds found for “{query}”."))
-                .key("no-results")
-                .font(SMALL)
-                .color(k.c.text_muted)
-                .wrap(),
+            Some(p) => problem(k, "search-problem", true, p),
+            None => {
+                let mut said = format!(
+                    "No sounds found for “{query}”. Try a shorter word, or paste a video link \
+                     below."
+                );
+                if s.settings.freesound_key.is_empty() {
+                    said.push_str(" Add a Freesound key to search Freesound\u{a0}too.");
+                }
+                text(said)
+                    .key("no-results")
+                    .role("status")
+                    .font(SMALL)
+                    .color(k.c.text_muted)
+                    .wrap()
+            }
         });
     }
+    let found = match f.hits.len() {
+        1 => format!("1 sound found for “{query}”"),
+        n => format!("{n} sounds found for “{query}”"),
+    };
     let mut list = col()
         .key("results")
+        .label(found.clone())
         .w_full()
         .px(12.0)
         .py(4.0)
@@ -199,8 +259,21 @@ fn results(s: &State, f: &Find, k: &Kit) -> Option<El> {
     let warning = f
         .problem
         .as_ref()
-        .map(|p| problem(k, "search-problem", warn(), p));
-    Some(col().w_full().gap(8.0).children(warning).child(list))
+        .map(|p| problem(k, "search-problem", false, p));
+    Some(
+        col()
+            .w_full()
+            .gap(8.0)
+            // Read out when the results arrive; nothing to see.
+            .child(
+                el().key("results-status")
+                    .absolute(0.0, 0.0)
+                    .role("status")
+                    .label(found),
+            )
+            .children(warning)
+            .child(list),
+    )
 }
 
 fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
@@ -219,7 +292,7 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
         row()
             .gap(4.0)
             .center_y()
-            .child(icon(&CHECK, 13.0).color(accent()))
+            .child(icon(&CHECK, 16.0 /* ICON */).color(accent()))
             .child(text("Added").font(SMALL).color(accent()))
     } else {
         Button::new("Add")
@@ -244,7 +317,8 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
                     text(hit.name.clone())
                         .font(LABEL)
                         .color(k.c.text_base)
-                        .truncate(),
+                        .truncate()
+                        .help_when_truncated(hit.name.clone()),
                 )
                 .child(
                     text(meta.join(" · "))
@@ -293,14 +367,15 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
         .disabled(busy)
         .on_edit(|s: &mut State| &mut s.find.link)
         .on_submit(|s: &mut State, _| s.get_audio())
+        .on_key(escape_goes_back)
         .build(k)
         .key("link-field");
     let status = match &f.youtube {
         YouTube::Idle => None,
         YouTube::AskToInstall => Some(install_notice(k)),
-        YouTube::Installing => Some(working(k, "installing", "Downloading yt-dlp…")),
+        YouTube::Installing => Some(working(k, "installing", "Downloading yt\u{2011}dlp…")),
         YouTube::Fetching => Some(working(k, "fetching", "Getting the audio…")),
-        YouTube::Failed(e) => Some(problem(k, "youtube-problem", danger(), e)),
+        YouTube::Failed(e) => Some(problem(k, "youtube-problem", true, e)),
     };
     card(k)
         .key("youtube")
@@ -316,38 +391,50 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
                 .center_y()
                 .child(col().grow(1.0).shrink().min_w(0.0).child(field))
                 .child(
+                    // As tall as the field beside it, with its corners.
                     Button::new("Get audio")
+                        .control_size(ControlSize::Large)
                         .disabled(busy || f.link.text.trim().is_empty())
                         .on_press(State::get_audio)
                         .build(k)
+                        .radius(k.radius.md)
                         .key("get-audio"),
                 ),
         )
         .children(status)
 }
 
-/// Said once, before yt-dlp is first downloaded.
+/// Said once, before yt-dlp is first downloaded: a line in the card, with its buttons under the
+/// words.
 fn install_notice(k: &Kit) -> El {
     col()
         .key("install-notice")
         .w_full()
-        .padding(12.0)
         .gap(10.0)
-        .radius(10.0)
-        .fill(wash(k.c.page, warn(), 0.08))
-        .border(1.0, warn().alpha(0.35))
         .child(
-            text(format!(
-                "To get audio from YouTube and X, Warble downloads yt-dlp ({}), a free tool, \
-                 from its official GitHub page. Warble keeps it up to date after that.",
-                youtube::TOOL_SIZE
-            ))
-            .font(SMALL)
-            .color(k.c.text_base)
-            .wrap(),
+            row()
+                .role("status")
+                .w_full()
+                .gap(8.0)
+                .items_start()
+                .child(icon(&WARNING, 16.0 /* ICON */).color(warn()).mt(1.0))
+                .child(
+                    text(format!(
+                        "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a \
+                         free tool, from its official GitHub page. Warble keeps it up to date \
+                         after\u{a0}that.",
+                        youtube::TOOL_SIZE
+                    ))
+                    .font(BODY)
+                    .color(k.c.text_base)
+                    .wrap()
+                    .grow(1.0)
+                    .shrink(),
+                ),
         )
         .child(
             row()
+                .pl(24.0)
                 .gap(8.0)
                 .child(
                     Button::new("Download yt-dlp")
@@ -366,20 +453,17 @@ fn install_notice(k: &Kit) -> El {
         )
 }
 
-fn sites_card(k: &Kit) -> El {
-    let mut c = card(k).key("sites").gap(4.0).child(
-        text("Good places to find sounds")
-            .font(HEADING)
-            .color(k.c.text_base)
-            .mb(4.0),
-    );
+fn sites_card(f: &Find, k: &Kit) -> El {
+    let mut sites = col().w_full().gap(4.0).pb(8.0);
     for (i, site) in SITES.iter().enumerate() {
-        c = c.child(
+        let open = open_url(site.url);
+        sites = sites.child(
             row()
                 .key(format!("site-{i}"))
                 .role("link")
                 .label(site.name)
                 .description(site.note)
+                .focusable(true)
                 .w_full()
                 .px(8.0)
                 .py(7.0)
@@ -390,6 +474,14 @@ fn sites_card(k: &Kit) -> El {
                 .hover(k.c.hover)
                 .press(k.c.pressed)
                 .on_press_tx(open_url(site.url))
+                // Space presses it as a control; Return opens it as a link does.
+                .on_key(move |s: &mut State, ev: &KeyEvent, tx: &mut Tx| {
+                    let enter = ev.key == Key::Enter;
+                    if enter && !tx.key_repeat() {
+                        open(s, tx);
+                    }
+                    enter
+                })
                 .child(
                     col()
                         .grow(1.0)
@@ -399,40 +491,58 @@ fn sites_card(k: &Kit) -> El {
                         .child(text(site.name).font(LABEL).color(k.c.text_base))
                         .child(text(site.note).font(SMALL).color(k.c.text_muted).wrap()),
                 )
-                .child(icon(&OPEN, 14.0).color(k.c.icon_muted)),
+                .child(icon(&OPEN, 16.0 /* ICON */).color(k.c.icon_muted)),
         );
     }
-    c
+    // The section's trigger is its own 32-point row: less padding keeps its title where a
+    // card's heading sits.
+    card(k).key("sites").py(6.0).child(
+        Collapsible::new("Good places to find sounds", f.sites_open)
+            .state(OPENABLE)
+            .on_toggle(|s: &mut State| s.find.sites_open = !s.find.sites_open)
+            .child(sites)
+            .build(k)
+            .key("sites-section"),
+    )
 }
 
+/// The kit shows a section's arrow only on hover or once open. Shown always, so a closed
+/// section looks like it opens.
+const OPENABLE: rune_kit::State = rune_kit::State::Hover;
+
+const KEY_WHY: &str =
+    "Freesound’s search needs a free key. Make one, then paste it here\u{a0}once.";
+
+fn key_field(f: &Find, k: &Kit) -> El {
+    TextInput::new(&f.key)
+        .secure()
+        .placeholder("Paste your key")
+        .label("Freesound key")
+        .width(None)
+        .on_edit(|s: &mut State| &mut s.find.key)
+        .on_change(|s: &mut State, _| s.set_freesound_key())
+        .on_key(escape_goes_back)
+        .build(k)
+        .key("key-field")
+}
+
+fn get_key_button(k: &Kit) -> El {
+    row().child(
+        Button::new("Get a free key")
+            .icon(&OPEN)
+            .on_press_tx(open_url(FREESOUND_KEY_URL))
+            .build(k)
+            .key("get-key"),
+    )
+}
+
+/// The Freesound key once one is set, at the bottom of the page.
 fn key_card(f: &Find, k: &Kit) -> El {
     card(k)
         .key("freesound")
-        .child(heading(
-            k,
-            "Freesound key",
-            "Freesound’s search needs a free key. Make one, then paste it here once.",
-        ))
-        .child(
-            TextInput::new(&f.key)
-                .secure()
-                .placeholder("Paste your key")
-                .label("Freesound key")
-                .width(None)
-                .on_edit(|s: &mut State| &mut s.find.key)
-                .on_change(|s: &mut State, _| s.set_freesound_key())
-                .build(k)
-                .key("key-field"),
-        )
-        .child(
-            row().child(
-                Button::new("Get a free key")
-                    .icon(&OPEN)
-                    .on_press_tx(open_url(FREESOUND_KEY_URL))
-                    .build(k)
-                    .key("get-key"),
-            ),
-        )
+        .child(heading(k, "Freesound key", KEY_WHY))
+        .child(key_field(f, k))
+        .child(get_key_button(k))
 }
 
 // --- Trim ---
@@ -440,52 +550,36 @@ fn key_card(f: &Find, k: &Kit) -> El {
 /// The waveform's height, and the room each handle needs at the edges.
 const WAVE_H: f32 = 96.0;
 const EDGE: f32 = 8.0;
+/// The width of a time under a handle, and the least room between the two.
+const TIME_W: f32 = 56.0;
+const TIME_GAP: f32 = 6.0;
 
 pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
     let Some(t) = &s.trim else { return el() };
     let playing = s.status.preview.is_some();
-    let length = t.end - t.start;
+    let w = cx.layout_size("wave").map_or(320.0, |z| z[0]);
     let hint = if t.duration() > trim::MAX_SECONDS {
         "Plays in your headphones only. Sounds can be up to 5 minutes long."
     } else {
         "Plays in your headphones only."
     };
     let name = TextInput::new(&s.find.trim_name)
-        .placeholder("Name")
         .label("Name")
         .width(None)
         .on_edit(|s: &mut State| &mut s.find.trim_name)
         .on_submit(|s: &mut State, _| s.trim_save())
+        .on_key(escape_goes_back)
         .build(k)
         .key("trim-name");
-    let times = row()
-        .key("trim-times")
-        .w_full()
-        .center_y()
-        .child(
-            text(trim::clock(t.start))
-                .font(NUMBER)
-                .color(k.c.text_muted)
-                .w(64.0),
+    let keeping = if t.is_whole() {
+        format!("Keeping all {}", trim::clock(t.duration()))
+    } else {
+        format!(
+            "Keeping {} of {}",
+            trim::clock(t.end - t.start),
+            trim::clock(t.duration())
         )
-        .child(
-            text(if t.is_whole() {
-                format!("Whole clip · {}", trim::clock(length))
-            } else {
-                format!("Keeping {}", trim::clock(length))
-            })
-            .font(NUMBER)
-            .color(k.c.text_base)
-            .grow(1.0)
-            .align(Align::Center),
-        )
-        .child(
-            text(trim::clock(t.end))
-                .font(NUMBER)
-                .color(k.c.text_muted)
-                .w(64.0)
-                .align(Align::End),
-        );
+    };
     let actions = row()
         .w_full()
         .gap(8.0)
@@ -500,19 +594,23 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         )
         .child(el().grow(1.0))
         .child(
-            Button::new(if t.saving { "Saving…" } else { "Save" })
-                .icon(&CHECK)
+            Button::new(if t.saving { "Adding…" } else { "Add sound" })
+                .icon(&PLUS)
                 .variant(ButtonVariant::Submit)
                 .disabled(t.saving)
                 .on_press(State::trim_save)
                 .build(k)
                 .key("trim-save"),
         );
-    col()
+    let mut page = col()
         .key("trim")
         .grow(1.0)
         .min_h(0.0)
-        .child(page_bar(k, "Trim", State::close_trim))
+        .on_key(escape_goes_back);
+    if let Some(opener) = &s.find.trim_opener {
+        page = page.focus_return(opener.clone());
+    }
+    page.child(page_bar(k, "Trim", State::close_trim))
         .child(scrolling(
             col().key("trim-body").children(notice(s, k)).child(
                 card(k)
@@ -528,9 +626,15 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
                     .child(
                         col()
                             .w_full()
-                            .gap(8.0)
-                            .child(waveform(s, t, cx, k))
-                            .child(times),
+                            .gap(6.0)
+                            .child(
+                                text(keeping)
+                                    .key("trim-length")
+                                    .font(NUMBER)
+                                    .color(k.c.text_muted),
+                            )
+                            .child(waveform(s, t, w, k))
+                            .child(times(k, t, w)),
                     )
                     .child(actions)
                     .child(text(hint).font(SMALL).color(k.c.text_faint).wrap()),
@@ -538,16 +642,54 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         ))
 }
 
+/// Where `at` seconds sits across a waveform `w` points wide.
+fn x_at(t: &Trim, w: f32, at: f64) -> f32 {
+    let inner = (w - 2.0 * EDGE).max(1.0);
+    EDGE + (at / t.duration().max(1e-9)) as f32 * inner
+}
+
+/// The start and end times, each under its handle. Visual only: the handles say them.
+fn times(k: &Kit, t: &Trim, w: f32) -> El {
+    let (left, right) = time_spots(w, x_at(t, w, t.start), x_at(t, w, t.end));
+    let time = |at: f64, x: f32| {
+        text(trim::clock(at))
+            .font(NUMBER)
+            .color(k.c.text_muted)
+            .w(TIME_W)
+            .align(Align::Center)
+            .absolute(x, 0.0)
+    };
+    el().key("trim-times")
+        .w_full()
+        .h(16.0)
+        .a11y_hidden()
+        .child(time(t.start, left))
+        .child(time(t.end, right))
+}
+
+/// The left edges of the start and end times, centred under handles at `a` and `b` on a
+/// waveform `w` wide: kept inside it, and pushed apart when they'd overlap.
+fn time_spots(w: f32, a: f32, b: f32) -> (f32, f32) {
+    let need = TIME_W + TIME_GAP;
+    let max = (w - TIME_W).max(0.0);
+    let (mut left, mut right) = (a - TIME_W / 2.0, b - TIME_W / 2.0);
+    if right - left < need {
+        let mid = (left + right) / 2.0;
+        (left, right) = (mid - need / 2.0, mid + need / 2.0);
+    }
+    let left = left.min(max - need).max(0.0);
+    (left, right.max(left + need).min(max))
+}
+
 /// Moves the start (or with `end`, the end) handle to `at` seconds.
 fn set_handle(t: &mut Trim, end: bool, at: f64) {
     if end { t.set_end(at) } else { t.set_start(at) }
 }
 
-/// The clip's waveform with the selection lit, a handle at each end (drag, or focus and use
-/// the arrow keys), and the playhead while the selection plays. Pressing the waveform moves the
-/// nearer handle there.
-fn waveform(s: &State, t: &Trim, cx: &mut Cx<State>, k: &Kit) -> El {
-    let w = cx.layout_size("wave").map_or(320.0, |z| z[0]);
+/// The clip's waveform `w` points wide with the selection lit, a handle at each end (drag, or
+/// focus and use the arrow keys), and the playhead while the selection plays. Pressing the
+/// waveform moves the nearer handle there.
+fn waveform(s: &State, t: &Trim, w: f32, k: &Kit) -> El {
     let inner = (w - 2.0 * EDGE).max(1.0);
     let d = t.duration().max(1e-9);
     let (a, b) = ((t.start / d) as f32, (t.end / d) as f32);
@@ -567,11 +709,7 @@ fn waveform(s: &State, t: &Trim, cx: &mut Cx<State>, k: &Kit) -> El {
             el().grow(1.0)
                 .h((p * (WAVE_H - 20.0)).max(2.0))
                 .radius(1.0)
-                .fill(if lit {
-                    accent()
-                } else {
-                    k.c.text_faint.alpha(0.45)
-                }),
+                .fill(if lit { accent() } else { k.c.border_strong }),
         );
     }
     let selection = el()
@@ -616,7 +754,7 @@ fn waveform(s: &State, t: &Trim, cx: &mut Cx<State>, k: &Kit) -> El {
         wave = wave.child(
             el().absolute(x(frac) - 0.75, 6.0)
                 .size(1.5, WAVE_H - 12.0)
-                .fill(oklch(0.97, 0.0, 0.0))
+                .fill(k.c.text_base)
                 .a11y_hidden(),
         );
     }
@@ -663,12 +801,168 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
                 .size(2.0, WAVE_H)
                 .fill(accent()),
         )
-        .child(
-            el().size(10.0, 26.0)
-                .radius(5.0)
-                .fill(oklch(0.97, 0.0, 0.0))
-                .shadow(1.0, 3.0, rune::Color::BLACK.alpha(0.45)),
-        )
+        .child(el().size(10.0, 26.0).radius(5.0).fill(k.c.knob).shadow(
+            1.0,
+            3.0,
+            rune::Color::BLACK.alpha(0.45),
+        ))
+}
+
+#[cfg(test)]
+mod tests {
+    use rune::{Env, Mods, Runtime};
+    use warble_engine::Clip;
+
+    use super::*;
+
+    fn app() -> Runtime<State> {
+        let mut rt = Runtime::new(
+            State::mock(),
+            crate::ui::view,
+            (400.0, 620.0),
+            Env::new(true, 1.0),
+        );
+        settle(&mut rt);
+        rt
+    }
+
+    fn settle(rt: &mut Runtime<State>) {
+        for _ in 0..30 {
+            rt.frame(1.0 / 60.0);
+        }
+    }
+
+    fn press(rt: &mut Runtime<State>, key: Key) {
+        rt.key(KeyEvent {
+            key,
+            mods: Mods::default(),
+        });
+        settle(rt);
+    }
+
+    fn focused(rt: &Runtime<State>) -> String {
+        let e = rt.elements().into_iter().find(|e| e.focused);
+        e.map_or_else(String::new, |e| e.path)
+    }
+
+    fn element(rt: &Runtime<State>, key: &str) -> rune::ElementInfo {
+        let e = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key));
+        e.unwrap_or_else(|| panic!("no element {key}"))
+    }
+
+    #[test]
+    fn escape_goes_back_and_focus_returns_to_what_opened_the_page() {
+        let mut rt = app();
+        rt.update(|s, _| s.open_find());
+        settle(&mut rt);
+        assert!(focused(&rt).contains("/search-field/"), "{}", focused(&rt));
+
+        rt.update(|s, _| scenes::results(s));
+        settle(&mut rt);
+        // As if result 1's scissors opened it.
+        rt.update(|s, _| {
+            s.open_trim(Clip::new(vec![0.1; 8000], 8000), "Bruh");
+            s.find.trim_opener = Some("trim-hit-1".into());
+        });
+        settle(&mut rt);
+        assert!(focused(&rt).contains("/trim-name/"), "{}", focused(&rt));
+
+        press(&mut rt, Key::Escape);
+        assert!(rt.state.trim.is_none() && rt.state.find.open);
+        assert!(focused(&rt).ends_with("/trim-hit-1"), "{}", focused(&rt));
+
+        press(&mut rt, Key::Escape);
+        assert!(!rt.state.find.open);
+        assert!(focused(&rt).ends_with("/find-sounds"), "{}", focused(&rt));
+        press(&mut rt, Key::Escape);
+        assert_eq!(
+            rt.state.tab,
+            Tab::Soundboard,
+            "Escape on the board does nothing"
+        );
+    }
+
+    #[test]
+    fn the_sites_open_from_their_section_and_open_from_the_keyboard() {
+        let mut rt = app();
+        rt.update(|s, _| s.open_find());
+        settle(&mut rt);
+        assert!(rt.find("site-0").is_none(), "closed at first");
+        let (x, y) = rt
+            .find("sites-section/trigger")
+            .expect("the section's trigger");
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        settle(&mut rt);
+        assert!(rt.state.find.sites_open);
+        // Tab from the trigger reaches each site; Return opens it.
+        for _ in 0..3 {
+            press(&mut rt, Key::Tab);
+        }
+        assert!(focused(&rt).ends_with("/site-2"), "{}", focused(&rt));
+        press(&mut rt, Key::Enter);
+        assert_eq!(rt.take_url_requests(), [SITES[2].url]);
+    }
+
+    #[test]
+    fn results_and_failures_are_read_out() {
+        let mut rt = app();
+        rt.update(|s, _| scenes::results(s));
+        settle(&mut rt);
+        let status = element(&rt, "results-status");
+        assert_eq!(status.role, "status");
+        assert_eq!(status.label.as_deref(), Some("7 sounds found for “bruh”"));
+        assert_eq!(
+            element(&rt, "results").label.as_deref(),
+            Some("7 sounds found for “bruh”")
+        );
+
+        rt.update(|s, _| {
+            s.settings.freesound_key.clear();
+            s.find.hits.clear();
+            s.find.searched = Some("zzz".into());
+        });
+        settle(&mut rt);
+        let none = element(&rt, "no-results");
+        assert_eq!(none.role, "status");
+        assert_eq!(
+            none.text.as_deref(),
+            Some(
+                "No sounds found for “zzz”. Try a shorter word, or paste a video link below. Add \
+                 a Freesound key to search Freesound\u{a0}too."
+            )
+        );
+
+        rt.update(|s, _| scenes::offline(s));
+        settle(&mut rt);
+        assert_eq!(element(&rt, "search-problem").role, "alert");
+        rt.update(|s, _| {
+            s.find.youtube = YouTube::Failed(youtube::UNREADABLE.into());
+        });
+        settle(&mut rt);
+        assert_eq!(element(&rt, "youtube-problem").role, "alert");
+    }
+
+    #[test]
+    fn trim_times_stay_under_their_handles_inside_the_waveform() {
+        let gap = |(l, r): (f32, f32)| r - l;
+        // Far apart: each centred under its handle.
+        assert_eq!(time_spots(300.0, 100.0, 200.0), (72.0, 172.0));
+        // At the edges: kept inside.
+        assert_eq!(time_spots(300.0, 8.0, 292.0), (0.0, 244.0));
+        // Close together: pushed apart about their middle.
+        let (l, r) = time_spots(300.0, 140.0, 150.0);
+        assert!(gap((l, r)) >= TIME_W + TIME_GAP && (l + r) / 2.0 + TIME_W / 2.0 == 145.0);
+        // Close together at an edge: pushed apart, still inside.
+        assert_eq!(time_spots(300.0, 8.0, 10.0), (0.0, TIME_W + TIME_GAP));
+        assert_eq!(
+            time_spots(300.0, 290.0, 292.0),
+            (300.0 - 2.0 * TIME_W - TIME_GAP, 300.0 - TIME_W)
+        );
+    }
 }
 
 // --- Scenes for headless snapshots ---
@@ -737,7 +1031,7 @@ pub mod scenes {
         s.open_find();
         s.find.query = rune::TextEdit::new("air horn");
         s.find.searched = Some("air horn".into());
-        s.find.problem = Some("Couldn't reach Myinstants. Check your internet.".into());
+        s.find.problem = Some("Couldn’t reach Myinstants. Check your internet.".into());
     }
 
     pub fn youtube_install(s: &mut State) {

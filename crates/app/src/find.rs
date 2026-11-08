@@ -41,8 +41,17 @@ pub struct Find {
     /// The result playing in the headphones.
     pub previewing: Option<String>,
     pub youtube: YouTube,
-    /// The last clip the trim editor saved, to say so.
+    /// The last sound the trim editor added, to say so.
     pub saved: Option<String>,
+    /// "Good places to find sounds" is open.
+    pub sites_open: bool,
+    /// The Freesound key's section is open.
+    pub key_open: bool,
+    /// The key goes under the search box: there was none when the page opened. It stays there
+    /// while the page is open, so a key being typed doesn't jump to the bottom card.
+    pub key_first: bool,
+    /// The control that opened the trim editor, which gets focus back when it closes.
+    pub trim_opener: Option<String>,
     search_id: u64,
 }
 
@@ -63,6 +72,10 @@ impl Find {
             previewing: None,
             youtube: YouTube::Idle,
             saved: None,
+            sites_open: false,
+            key_open: false,
+            key_first: false,
+            trim_opener: None,
             search_id: 0,
         }
     }
@@ -81,6 +94,9 @@ impl State {
         self.set_tab(Tab::Soundboard);
         self.find.open = true;
         self.find.saved = None;
+        self.find.key_first = self.settings.freesound_key.is_empty();
+        // Keyboard focus goes to the search box; leaving gives it back to "Find sounds".
+        self.find.query.focused = true;
         // YouTube changes often; let yt-dlp update itself in the background, once a day.
         if self.handle.is_some() && !self.headless {
             let dir = self.work_dir();
@@ -189,7 +205,11 @@ impl State {
         self.with_hit(
             url,
             |hit| Clip::decode(&library::download(hit)?, youtube::MAX_SECONDS),
-            |s, hit, clip| s.open_trim(clip, &hit.name),
+            |s, hit, clip| {
+                let i = s.find.hits.iter().position(|h| h.url == hit.url);
+                s.open_trim(clip, &hit.name);
+                s.find.trim_opener = i.map(|i| format!("trim-hit-{i}"));
+            },
         );
     }
 
@@ -217,7 +237,7 @@ impl State {
                 let (file, title) = youtube::fetch(&dir, &link, &out)?;
                 let clip = Clip::decode(&file, youtube::MAX_SECONDS);
                 let _ = std::fs::remove_file(&file);
-                let clip = clip.map_err(|_| "Couldn't read that video's audio.".to_string())?;
+                let clip = clip.map_err(|_| youtube::UNREADABLE.to_string())?;
                 Ok((clip, title))
             },
             |s, result: Result<(Clip, String), String>| match result {
@@ -225,6 +245,7 @@ impl State {
                     s.find.youtube = YouTube::Idle;
                     s.find.link = TextEdit::new("");
                     s.open_trim(clip, &title);
+                    s.find.trim_opener = Some("link-field".into());
                 }
                 Err(e) => s.find.youtube = YouTube::Failed(e),
             },
@@ -256,10 +277,14 @@ impl State {
 
     // --- Trim ---
 
+    /// Opens the trim editor with focus in its name field. Whoever opens it from a control
+    /// sets `trim_opener` after.
     pub fn open_trim(&mut self, clip: Clip, name: &str) {
         self.stop_preview();
         self.set_tab(Tab::Soundboard);
         self.find.trim_name = TextEdit::new(library::safe_name(name));
+        self.find.trim_name.focused = true;
+        self.find.trim_opener = None;
         self.trim = Some(Trim::new(clip));
     }
 
@@ -268,21 +293,29 @@ impl State {
         self.trim = None;
     }
 
-    /// The trim editor for a tile's file. Saving makes a new tile; this one stays.
+    /// The trim editor for a tile's file. Adding makes a new tile; this one stays. Focus goes
+    /// back to the tile when it closes.
     pub fn trim_sound(&mut self, id: SoundId) {
         let Some(sound) = self.sounds.iter().find(|s| s.id == id) else {
             return;
         };
         let (path, name) = (sound.path.clone(), format!("{} (trimmed)", sound.name));
-        self.trim_file(path, name);
+        self.trim_from(path, name, Some(format!("sound-{}", id.0)));
     }
 
     /// The trim editor for any file Warble can read: a tile's, or a dropped video.
     pub fn trim_file(&mut self, path: std::path::PathBuf, name: String) {
+        self.trim_from(path, name, None);
+    }
+
+    fn trim_from(&mut self, path: std::path::PathBuf, name: String, opener: Option<String>) {
         self.off_thread(
             move || Clip::decode(&path, youtube::MAX_SECONDS),
             move |s, clip| match clip {
-                Ok(clip) => s.open_trim(clip, &name),
+                Ok(clip) => {
+                    s.open_trim(clip, &name);
+                    s.find.trim_opener = opener;
+                }
                 Err(e) => s.notice = Some(e),
             },
         );
@@ -331,11 +364,14 @@ impl State {
                     s.find.saved = Some(crate::settings::sound_name(&path));
                     s.load_paths(vec![path], true);
                 }
-                Err(e) => {
+                Err(_) => {
                     if let Some(t) = &mut s.trim {
                         t.saving = false;
                     }
-                    s.notice = Some(format!("Couldn't save the clip: {e}"));
+                    s.notice = Some(
+                        "Couldn’t save the sound. Check that your drive has space, then try again."
+                            .into(),
+                    );
                 }
             },
         );
