@@ -876,3 +876,44 @@ fn status_and_alert_lines_are_read_once() {
     settle(&mut rt);
     assert_eq!(read(&rt, why), 1, "the remote's problem");
 }
+
+#[test]
+fn home_and_end_go_to_the_ends_of_faders_and_trim_handles() {
+    let mut rt = app();
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    tab_to(&mut rt, "mic-gain");
+    press(&mut rt, Key::End);
+    assert!(near(rt.state.settings.mic_gain.into(), 4.0), "400%");
+    press(&mut rt, Key::Home);
+    assert!(near(rt.state.settings.mic_gain.into(), 0.25), "25%");
+
+    let clip = Clip::new(vec![0.25; 8000 * 4], 8000);
+    rt.update(move |s, _| {
+        s.open_trim(clip, "Zoo");
+        let t = s.trim.as_mut().unwrap();
+        t.set_start(1.0);
+        t.set_end(3.0);
+    });
+    settle(&mut rt);
+    let at = |rt: &Runtime<State>| {
+        let t = rt.state.trim.as_ref().unwrap();
+        (t.start, t.end)
+    };
+    // The start goes as near the end handle as it can, then to the clip's start.
+    tab_to(&mut rt, "trim-start");
+    press(&mut rt, Key::End);
+    assert!(
+        near(at(&rt).0, 3.0 - crate::trim::MIN_SECONDS),
+        "{:?}",
+        at(&rt)
+    );
+    assert!(near(at(&rt).1, 3.0), "the end stays: {:?}", at(&rt));
+    press(&mut rt, Key::Home);
+    assert!(near(at(&rt).0, 0.0), "{:?}", at(&rt));
+    // The end goes as near the start handle as it can, then to the clip's end.
+    tab_to(&mut rt, "trim-end");
+    press(&mut rt, Key::Home);
+    assert!(near(at(&rt).1, crate::trim::MIN_SECONDS), "{:?}", at(&rt));
+    press(&mut rt, Key::End);
+    assert!(near(at(&rt).1, 4.0), "{:?}", at(&rt));
+}

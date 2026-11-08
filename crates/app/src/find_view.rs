@@ -797,6 +797,7 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
         .center()
         .cursor(Cursor::ResizeColumn)
         .on_step(move |s: &mut State, steps, _| s.step_trim(end, steps))
+        .on_step_limit(move |s: &mut State, max, _| s.trim_limit(end, max))
         .on_drag(move |s: &mut State, dr: &mut Drag, tx: &mut Tx| {
             let Some(t) = &mut s.trim else { return };
             match dr.phase {

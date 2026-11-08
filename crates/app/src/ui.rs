@@ -1176,6 +1176,7 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
         .on_step(move |s: &mut State, steps, _| {
             set(s, (get(s) + steps as f32 * 0.05).clamp(0.0, 1.0))
         })
+        .on_step_limit(move |s: &mut State, end, _| set(s, if end { 1.0 } else { 0.0 }))
         .on_drag(
             move |s: &mut State, d: &mut Drag, tx: &mut Tx| match d.phase {
                 Phase::Down => {
