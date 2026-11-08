@@ -484,7 +484,9 @@ fn sites_card(f: &Find, k: &Kit) -> El {
                 .label(site.name)
                 .description(site.note)
                 .focusable(true)
-                .w_full()
+                // The hover fill reaches past the words and icons, which line up with the
+                // page's edges (stretched, so the margins widen it on both sides).
+                .mx(-8.0)
                 .px(8.0)
                 .py(7.0)
                 .gap(10.0)

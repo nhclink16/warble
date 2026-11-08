@@ -91,7 +91,9 @@ pub(crate) fn face() -> Color {
 pub(crate) fn recess() -> Color {
     tone(0.17)
 }
-/// The edge of a control on the body, 3:1 against it: fields, menus and keys.
+/// The edge of a control on the body, 3:1 against it: fields, menus, switch and fader slots,
+/// and the footswitch's ring while it's on. Keys and latched pads take it only along their
+/// lit top rim, and other pads have a dimmer one: their printed labels say what they are.
 fn edge() -> Color {
     tone(0.54)
 }
@@ -682,7 +684,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         Tab::Soundboard if s.trim.is_some() => find_view::trim_page(s, cx, &k),
         Tab::Soundboard if s.find.open => find_view::find_page(s, &k),
         Tab::Soundboard => soundboard(s, cx, &k, &mut layer),
-        Tab::Setup => scrolling(setup(s, &k, &mut layer)),
+        Tab::Setup => scrolling(setup(s, cx, &k, &mut layer)),
     };
     let mut root = col()
         .key("app")
@@ -1693,7 +1695,7 @@ fn removed_row(k: &Kit, r: &Removed) -> El {
 
 // --- Setup ---
 
-fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
+fn setup(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El {
     let mut page = col().key("setup");
     if s.cable_missing() {
         page = page.child(cable_callout(k));
@@ -1702,7 +1704,7 @@ fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     // Under a callout, the devices take a rule; at the top of the page they don't need one.
     let first = !s.cable_missing() && hotkeys.is_none();
     page.children(hotkeys)
-        .child(devices_card(s, k, layer, first))
+        .child(devices_card(s, cx, k, layer, first))
         .child(remote_view::remote_card(s, k))
         .child(discord_card(s, k))
         .child(hotkeys_card(s, k))
@@ -1777,7 +1779,7 @@ fn cable_callout(k: &Kit) -> El {
         )
 }
 
-fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
+fn devices_card(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
     let st = &s.status;
     // The engine's whole message, under the picker whose device it names, else at the foot.
     let error = st.error.as_deref().filter(|_| !s.cable_missing());
@@ -1797,6 +1799,7 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
         .child(
             picker(
                 s,
+                cx,
                 k,
                 layer,
                 Picker::Input,
@@ -1810,6 +1813,7 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
         .child(
             picker(
                 s,
+                cx,
                 k,
                 layer,
                 Picker::Cable,
@@ -1823,6 +1827,7 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>, first: bool) -> El {
         .child(
             picker(
                 s,
+                cx,
                 k,
                 layer,
                 Picker::Headphones,
@@ -1864,6 +1869,7 @@ fn error_picker(s: &State, e: &str) -> Option<Picker> {
 #[allow(clippy::too_many_arguments)]
 fn picker(
     s: &State,
+    cx: &mut Cx<State>,
     k: &Kit,
     layer: &mut Vec<El>,
     which: Picker,
@@ -1912,6 +1918,14 @@ fn picker(
         // and its faint wash while open.
         .hover(k.c.hover)
         .w_full();
+    // The kit's list can be as narrow as 160 points, which cuts device names to a few
+    // letters. As wide as the field (328 points in the smallest window), it shows them whole.
+    if open && let Some(list) = layer.pop() {
+        let w = cx
+            .layout_size(&format!("{key}-trigger"))
+            .map_or(328.0, |[w, _]| w);
+        layer.push(list.min_w(w).max_w(w));
+    }
     let select = if open {
         select.fill(k.c.bg_base).gradient(k.c.hover, k.c.hover)
     } else {
@@ -2042,7 +2056,7 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
         );
         // The callout at the top of Setup is the alert; these lines say it again in place.
         for says in hotkey_problems(s, Some(&chords)) {
-            line = line.child(problem_line(k, danger(), SMALL, &says).label(says.clone()));
+            line = line.child(problem_line(k, warn(), SMALL, &says).label(says.clone()));
         }
         c = c.child(line);
     }
