@@ -211,6 +211,15 @@ pub(crate) fn slot(k: &Kit) -> Kit {
     k
 }
 
+/// The kit for menus and the pickers' lists: the row the pointer or the keys are on lights in
+/// the filled graphite, 3.3:1 against the menu, with white words on it (4.9:1).
+pub(crate) fn menu(k: &Kit) -> Kit {
+    let mut k = k.clone();
+    k.c.hover = filled();
+    k.c.text_base = Color::WHITE;
+    k
+}
+
 /// A kit button as a key on the panel: raised like a pad, its rim lit from the top.
 pub(crate) fn as_key(e: El) -> El {
     e.gradient(Color::WHITE.alpha(0.04), Color::BLACK.alpha(0.12))
@@ -1462,7 +1471,8 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
         )
         .child(actions);
     let point = s.sound_menu.filter(|(m, _)| *m == id).map(|(_, p)| p);
-    rune_kit::context_menu(format!("sound-menu-{}", id.0), tile, point)
+    // Keyed by place: after Remove, the menu hands focus to the pad that slides into it.
+    rune_kit::context_menu(format!("sound-menu-{i}"), tile, point)
         .item(MenuItem::new("Trim…").on_select(move |s: &mut State| {
             s.sound_menu = None;
             s.trim_sound(id);
@@ -1472,7 +1482,7 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             s.remove_sound(id);
         }))
         .on_close(|s: &mut State| s.sound_menu = None)
-        .build(k, layer)
+        .build(&menu(k), layer)
 }
 
 /// An empty bank: nine dark sockets, numbered for the keys that will play them.
@@ -1841,11 +1851,12 @@ fn picker(
         Picker::Cable => "pick-cable",
         Picker::Headphones => "pick-headphones",
     };
+    let open = s.open_picker == Some(which);
     let select = Select::new(key, &names)
         .label(label)
         .current(Some(chosen.as_deref().unwrap_or(default)))
         .appearance(SelectAppearance::Field)
-        .open(s.open_picker == Some(which))
+        .open(open)
         .on_toggle(move |s: &mut State| {
             s.open_picker = if s.open_picker == Some(which) {
                 None
@@ -1857,8 +1868,16 @@ fn picker(
         .on_choose(move |s: &mut State, v: &str, _| {
             s.set_device(which, (v != default).then(|| v.to_string()))
         })
-        .build(&slot(k), layer)
+        .build(&menu(&slot(k)), layer)
+        // Only the list's rows take the menu's highlight: the field keeps the panel's hover,
+        // and its faint wash while open.
+        .hover(k.c.hover)
         .w_full();
+    let select = if open {
+        select.fill(k.c.bg_base).gradient(k.c.hover, k.c.hover)
+    } else {
+        select
+    };
     // With the default chosen, say which device that is.
     let using = using.filter(|_| chosen.is_none()).map(|u| {
         text(if which == Picker::Cable {

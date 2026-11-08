@@ -483,13 +483,32 @@ fn a_tiles_context_menu_trims_and_removes_from_the_keyboard() {
         },
     });
     settle(&mut rt);
-    assert!(
-        rt.find(&format!("sound-menu-{}-item0", id.0)).is_some(),
-        "Trim…"
-    );
-    tap(&mut rt, &format!("sound-menu-{}-item1", id.0));
+    // The menu is keyed by the pad's place on the board: this is the first.
+    assert!(rt.find("sound-menu-0-item0").is_some(), "Trim…");
+    tap(&mut rt, "sound-menu-0-item1");
     assert!(rt.state.sounds.is_empty(), "Remove");
     assert!(rt.state.sound_menu.is_none());
+}
+
+#[test]
+fn remove_from_the_menu_hands_focus_to_the_pad_that_takes_its_place() {
+    let mut rt = app();
+    let files = ["Air horn.wav", "Bruh.wav"].map(PathBuf::from).to_vec();
+    rt.drop_files(files, Some((200.0, 300.0)));
+    settle(&mut rt);
+    let (air, bruh) = (rt.state.sounds[0].id, rt.state.sounds[1].id);
+    tab_to(&mut rt, &format!("sound-{}", air.0));
+    rt.key(KeyEvent {
+        key: Key::ContextMenu,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    // Down to Remove, and press it.
+    press(&mut rt, Key::Down);
+    press(&mut rt, Key::Enter);
+    assert_eq!(rt.state.sounds.len(), 1);
+    let next = format!("/sound-{}", bruh.0);
+    assert!(focus_path(&rt).ends_with(&next), "{}", focus_path(&rt));
 }
 
 #[test]
