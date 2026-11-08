@@ -698,6 +698,43 @@ fn only_audio_going_into_the_call_lights_the_led() {
 }
 
 #[test]
+fn a_screen_reader_hears_each_pads_hotkey() {
+    let mut rt = app();
+    scene(&mut rt, "voice");
+    assert_eq!(a11y_node(&rt, "preset-normal")["shortcut"], "Ctrl+Alt+1");
+    assert_eq!(a11y_node(&rt, "preset-deep")["shortcut"], "Ctrl+Alt+2");
+    // The effect is one switch with its hotkey, named once; the row around it only takes clicks.
+    let switch = a11y_node(&rt, "effect-switch");
+    assert_eq!(
+        (&switch["role"], &switch["name"], &switch["shortcut"]),
+        (
+            &"switch".into(),
+            &"Voice effect".into(),
+            &"Ctrl+Alt+V".into()
+        )
+    );
+    let named = a11y(&rt)
+        .into_iter()
+        .filter(|n| {
+            n["name"]
+                .as_str()
+                .is_some_and(|n| n.contains("Voice effect"))
+        })
+        .count();
+    assert_eq!(named, 1);
+    assert!(a11y(&rt).iter().all(|n| n["key"] != "effect"));
+    assert_eq!(a11y_node(&rt, "monitor-switch")["shortcut"], "Ctrl+Alt+M");
+    assert!(rt.state.settings.effect);
+    tap(&mut rt, "effect");
+    assert!(!rt.state.settings.effect, "the row still takes a click");
+
+    scene(&mut rt, "soundboard");
+    let first = rt.state.sounds[0].id;
+    let pad = a11y_node(&rt, &format!("sound-{}", first.0));
+    assert_eq!(pad["shortcut"], "Ctrl+Shift+1");
+}
+
+#[test]
 fn the_phone_remote_says_when_there_is_no_network() {
     let mut rt = app();
     scene(&mut rt, "remote-no-network");

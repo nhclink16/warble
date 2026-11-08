@@ -853,7 +853,9 @@ fn effect_card(s: &State, k: &Kit) -> El {
     } else {
         "Off: people hear your own voice".to_string()
     };
-    // The line wraps rather than cut off its consequence, so the row grows to fit it.
+    // The line wraps rather than cut off its consequence, so the row grows to fit it. The
+    // whole row takes a click, but a screen reader hears only the switch and the line under
+    // it: "Voice effect" once, with its hotkey.
     row()
         .key("effect")
         .w_full()
@@ -863,6 +865,7 @@ fn effect_card(s: &State, k: &Kit) -> El {
         .center_y()
         .cursor(Cursor::Pointer)
         .on_press(|s: &mut State| s.set_effect(!s.settings.effect))
+        .role("none")
         .child(footswitch(k, on, live))
         .child(
             col()
@@ -874,9 +877,9 @@ fn effect_card(s: &State, k: &Kit) -> El {
                         .w_full()
                         .gap(8.0)
                         .center_y()
-                        .child(printed(k, "Voice effect"))
+                        .child(printed(k, "Voice effect").a11y_hidden())
                         .child(el().grow(1.0))
-                        .child(keys(k, state::EFFECT_KEY)),
+                        .child(keys(k, state::EFFECT_KEY).a11y_hidden()),
                 )
                 .child(
                     text(detail)
@@ -906,6 +909,7 @@ fn footswitch(k: &Kit, on: bool, live: bool) -> El {
         .role("switch")
         .label("Voice effect")
         .checked(on)
+        .shortcut_hint(state::keycaps(state::EFFECT_KEY).join("+"))
         .focusable(true)
         .focus_ring(2.0, 2.5, k.c.border_focus)
         .size(61.0, 61.0)
@@ -988,6 +992,8 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, live: bool) -> El {
         .role("radio")
         .label(p.name())
         .checked(selected)
+        // The printed number is hidden; a screen reader hears the whole hotkey instead.
+        .shortcut_hint(state::keycaps(&state::preset_key(i)).join("+"))
         .focusable(true)
         .focus_selected(selected)
         .h(84.0)
@@ -1112,8 +1118,9 @@ fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
                             row()
                                 .gap(10.0)
                                 .center_y()
-                                .child(printed(k, "Hear yourself"))
-                                .child(keys(k, state::MONITOR_KEY)),
+                                // The switch says both to a screen reader.
+                                .child(printed(k, "Hear yourself").a11y_hidden())
+                                .child(keys(k, state::MONITOR_KEY).a11y_hidden()),
                         )
                         .child(
                             text("How you sound in the call")
@@ -1129,7 +1136,8 @@ fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
                         .control_size(ControlSize::Small)
                         .on_toggle(|s: &mut State| s.set_monitor(!s.settings.monitor))
                         .build(k)
-                        .key("monitor-switch"),
+                        .key("monitor-switch")
+                        .shortcut_hint(state::keycaps(state::MONITOR_KEY).join("+")),
                 ),
         )
         .child(slider(
@@ -1436,7 +1444,7 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             .child(icon(&PLAYING, ICON).color(k.c.text_base))
             .child(led_dot(true))
     });
-    let tile = raise(col(), if playing { Lamp::Lit } else { Lamp::Off })
+    let mut tile = raise(col(), if playing { Lamp::Lit } else { Lamp::Off })
         .key(format!("sound-{}", id.0))
         .role("button")
         .label(if playing {
@@ -1480,6 +1488,10 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
                 .a11y_hidden(),
         )
         .child(actions);
+    // The printed number is hidden; a screen reader hears the whole hotkey instead.
+    if i < 9 {
+        tile = tile.shortcut_hint(state::keycaps(&state::sound_key(i)).join("+"));
+    }
     let point = s.sound_menu.filter(|(m, _)| *m == id).map(|(_, p)| p);
     // Keyed by place: after Remove, the menu hands focus to the pad that slides into it.
     rune_kit::context_menu(format!("sound-menu-{i}"), tile, point)
