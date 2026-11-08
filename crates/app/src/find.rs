@@ -344,6 +344,20 @@ impl State {
         }
     }
 
+    /// Home (`max` false) and End on a handle: the start goes to the clip's start or as near
+    /// the end handle as it can; the end goes as near the start handle as it can, or to the
+    /// clip's end.
+    pub fn trim_limit(&mut self, end: bool, max: bool) {
+        if let Some(t) = &mut self.trim {
+            match (end, max) {
+                (false, false) => t.set_start(0.0),
+                (false, true) => t.set_start(t.end - trim::MIN_SECONDS),
+                (true, false) => t.set_end(t.start + trim::MIN_SECONDS),
+                (true, true) => t.set_end(t.duration()),
+            }
+        }
+    }
+
     /// Writes the selection as a WAV into the sounds folder and adds its tile.
     pub fn trim_save(&mut self) {
         let dir = self

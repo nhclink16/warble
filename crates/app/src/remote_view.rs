@@ -1,20 +1,22 @@
 //! The Setup tab's Phone remote card: the switch, and while it's on, the QR code a phone scans.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use qrcodegen::{QrCode, QrCodeEcc};
 use rune::{Color, El, Tx, col, el, icon, oklch, row, text};
-use rune_kit::{Button, ControlSize, Kit, SegmentedControl, Switch};
+use rune_kit::{Button, ControlSize, Kit, Switch};
 
 use crate::state::State;
-use crate::ui::{BODY, HEADING, ICON, SMALL, WARNING, card, danger};
+use crate::ui::{
+    BODY, ICON, NUMBER, SMALL, WARNING, as_key, danger, group, problem_line, title_row, tray, warn,
+};
 
 /// How long a copied link, key and all, stays on the clipboard.
 const COPIED_FOR: Duration = Duration::from_secs(2 * 60);
 
 pub fn remote_card(s: &State, k: &Kit) -> El {
     let on = s.settings.remote;
-    let c = card(k).key("remote").child(
+    let c = group(k).key("remote").child(
         row()
             .w_full()
             .gap(10.0)
@@ -23,8 +25,8 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                 col()
                     .grow(1.0)
                     .shrink()
-                    .gap(3.0)
-                    .child(text("Phone remote").font(HEADING).color(k.c.text_base))
+                    .gap(2.0)
+                    .child(title_row(k, "Phone remote"))
                     .child(
                         text("Play sounds and change your voice from your\u{a0}phone.")
                             .font(SMALL)
@@ -50,11 +52,11 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
         return c.child(warning(k, problem));
     }
     let Some(address) = r.address() else {
+        let says = "Connect this PC to Wi‑Fi or a network cable, then open this tab again.";
         return c.child(
-            text("Connect this PC to Wi‑Fi or a network cable, then open this tab again.")
-                .font(BODY)
-                .color(k.c.text_base)
-                .wrap(),
+            problem_line(k, warn(), BODY, says)
+                .role("status")
+                .label(says),
         );
     };
     let link = format!("{address}/#k={}", s.settings.remote_key);
@@ -72,12 +74,16 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
     let mut c = c;
     if r.wifi.is_some() && r.tailscale.is_some() {
         c = c.child(
-            SegmentedControl::new(&["Wi‑Fi", "Tailscale"], Some(usize::from(r.use_tailscale)))
-                .label("Connect over")
-                .width(None)
-                .on_pick(|s: &mut State, i, _| s.remote.use_tailscale = i == 1)
-                .build(k)
-                .key("remote-network"),
+            tray(
+                k,
+                "Connect over",
+                &["Wi‑Fi", "Tailscale"],
+                usize::from(r.use_tailscale),
+                |s, i| s.remote.use_tailscale = i == 1,
+            )
+            // A step down from the tabs: a choice within the card, not a page.
+            .h(30.0)
+            .key("remote-network"),
         );
     }
     c.child(
@@ -85,7 +91,7 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             .w_full()
             .gap(14.0)
             .items_start()
-            .child(qr(&link))
+            .child(qr(k, &link))
             .child(
                 col()
                     .grow(1.0)
@@ -98,21 +104,33 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                     .child(line(network))
                     .child(
                         text(address.trim_start_matches("http://").to_string())
-                            .font(SMALL)
+                            .font(NUMBER)
                             .color(k.c.text_faint)
                             .truncate(),
                     )
                     .child(
                         row().child(
-                            Button::new("Copy link")
-                                .help("Copies the link with its code. Warble clears it from the clipboard after 2 minutes.")
-                                .on_press_tx(move |_: &mut State, tx: &mut Tx| {
-                                    tx.copy_secret(link.clone(), COPIED_FOR);
-                                })
-                                .build(k)
-                                .key("copy-link"),
+                            as_key(
+                                Button::new("Copy link")
+                                    .help("Copies the link with its code. Warble clears it from the clipboard after 2 minutes.")
+                                    .on_press_tx(move |s: &mut State, tx: &mut Tx| {
+                                        tx.copy_secret(link.clone(), COPIED_FOR);
+                                        s.link_copied = Some(Instant::now());
+                                    })
+                                    .build(k),
+                            )
+                            .key("copy-link"),
                         ),
-                    ),
+                    )
+                    // For a few seconds after a copy: it worked, and for how long.
+                    .children(s.link_copied.map(|_| {
+                        text("Copied. Warble clears it in\u{a0}2\u{a0}minutes.")
+                            .key("copied")
+                            .role("status")
+                            .font(SMALL)
+                            .color(k.c.text_muted)
+                            .wrap()
+                    })),
             ),
     )
     .child(
@@ -131,10 +149,12 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             .gap(10.0)
             .center_y()
             .child(
-                Button::new("Sign out all phones")
-                    .on_press(State::forget_phones)
-                    .build(k)
-                    .key("new-code"),
+                as_key(
+                    Button::new("Sign out all phones")
+                        .on_press(State::forget_phones)
+                        .build(k),
+                )
+                .key("new-code"),
             )
             .child(
                 text("Shows a new code. Scan it again on the phones you\u{a0}keep.")
@@ -151,6 +171,7 @@ fn warning(k: &Kit, why: &str) -> El {
     row()
         .key("remote-problem")
         .role("alert")
+        .label(why.to_string())
         .w_full()
         .gap(8.0)
         .items_start()
@@ -161,7 +182,8 @@ fn warning(k: &Kit, why: &str) -> El {
                 .color(k.c.text_base)
                 .wrap()
                 .grow(1.0)
-                .shrink(),
+                .shrink()
+                .a11y_hidden(),
         )
 }
 
@@ -170,7 +192,7 @@ const MODULE: f32 = 4.0;
 const QUIET: i32 = 2;
 
 /// The link as a QR code: black runs on white, one rectangle per run of a row.
-fn qr(link: &str) -> El {
+fn qr(k: &Kit, link: &str) -> El {
     let Ok(code) = QrCode::encode_text(link, QrCodeEcc::Low) else {
         return el();
     };
@@ -181,8 +203,9 @@ fn qr(link: &str) -> El {
         .role("img")
         .label("QR code with the link for your phone")
         .size(side, side)
-        .radius(8.0)
-        .fill(oklch(1.0, 0.0, 0.0));
+        .radius(k.radius.lg)
+        .fill(oklch(1.0, 0.0, 0.0))
+        .shadow(2.0, 4.0, Color::BLACK.alpha(0.55));
     for y in 0..n {
         let mut x = 0;
         while x < n {
@@ -238,6 +261,28 @@ mod tests {
             copied.as_deref(),
             Some("http://192.168.1.20:47823/#k=4f9c2a7e1b3d58c6a0e2f7419d8b3c65")
         );
+        // The card says it worked, read out as it appears, for a few seconds.
+        let line = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("copied"))
+            .expect("the Copied line");
+        assert_eq!(
+            (line.role, line.text.as_deref()),
+            (
+                "status",
+                Some("Copied. Warble clears it in\u{a0}2\u{a0}minutes.")
+            )
+        );
+        rt.state.link_copied = rt
+            .state
+            .link_copied
+            .map(|at| at - crate::state::COPIED_SHOWN);
+        rt.update(|s, tx| {
+            s.poll(1e6, tx);
+        });
+        settle(&mut rt);
+        assert!(rt.find("copied").is_none(), "then it goes");
         let qr = rt
             .elements()
             .into_iter()

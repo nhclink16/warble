@@ -1,10 +1,11 @@
 //! The Find sounds page (search, YouTube link, good sites, Freesound key) and the trim editor,
 //! both shown in place of the Soundboard tab's board.
 
-use rune::{Align, Cursor, Cx, Drag, El, Key, KeyEvent, Phase, Tx, col, el, icon, row, text};
+use rune::{
+    Align, Color, Cursor, Cx, Drag, El, Key, KeyEvent, Phase, Shadow, Tx, col, el, icon, row, text,
+};
 use rune_kit::{
-    Button, ButtonVariant, Collapsible, ControlSize, IconButton, IconButtonVariant, Kit, Spinner,
-    TextInput,
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit, Spinner, TextInput,
 };
 
 use crate::find::{Find, YouTube};
@@ -12,8 +13,9 @@ use crate::library::{FREESOUND_KEY_URL, Hit, SITES};
 use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
-    BACK, BODY, CHECK, HEADING, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS,
-    SEARCH, SMALL, STOP, TITLE, WARNING, accent, card, danger, notice, scrolling, warn, wash,
+    BACK, BODY, CHECK, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
+    SMALL, STOP, TITLE, WARNING, as_key, danger, disclosure, fader_cap, group, readout, recess,
+    scrolling, slot, title_row, tone, warn,
 };
 use crate::youtube;
 
@@ -62,10 +64,16 @@ fn working(k: &Kit, key: &str, what: &str) -> El {
     row()
         .key(key.to_string())
         .role("status")
+        .label(what.to_string())
         .gap(8.0)
         .center_y()
         .child(Spinner::new().size(14.0).build(k))
-        .child(text(what.to_string()).font(SMALL).color(k.c.text_muted))
+        .child(
+            text(what.to_string())
+                .font(SMALL)
+                .color(k.c.text_muted)
+                .a11y_hidden(),
+        )
 }
 
 /// A short line about a problem: something that failed, read out at once, or (`failed` false)
@@ -74,6 +82,7 @@ fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
     row()
         .key(key.to_string())
         .role(if failed { "alert" } else { "status" })
+        .label(message.to_string())
         .w_full()
         .gap(8.0)
         .items_start()
@@ -84,26 +93,28 @@ fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
                 .color(k.c.text_base)
                 .wrap()
                 .grow(1.0)
-                .shrink(),
+                .shrink()
+                .a11y_hidden(),
         )
 }
 
+/// A group's printed title, and a line on what it's for.
 fn heading(k: &Kit, title: &str, detail: &str) -> El {
-    col()
-        .gap(3.0)
-        .child(text(title.to_string()).font(HEADING).color(k.c.text_base))
-        .child(
-            text(detail.to_string())
-                .font(SMALL)
-                .color(k.c.text_muted)
-                .wrap(),
-        )
+    col().w_full().gap(2.0).child(title_row(k, title)).child(
+        text(detail.to_string())
+            .font(SMALL)
+            .color(k.c.text_muted)
+            .wrap(),
+    )
 }
 
 fn open_url(url: &'static str) -> impl Fn(&mut State, &mut Tx) {
     move |s: &mut State, tx: &mut Tx| {
-        if let Err(e) = tx.open_url(url) {
-            s.notice = Some(format!("Couldn’t open the browser: {e}"));
+        if tx.open_url(url).is_err() {
+            let address = url.trim_start_matches("https://").trim_end_matches('/');
+            s.notice = Some(format!(
+                "Couldn’t open your browser. Open it and go to {address}."
+            ));
         }
     }
 }
@@ -112,26 +123,23 @@ fn open_url(url: &'static str) -> impl Fn(&mut State, &mut Tx) {
 
 pub fn find_page(s: &State, k: &Kit) -> El {
     let f = &s.find;
+    // Added sounds stay on this PC until played, so the check is the panel's ink, not the LED.
     let saved = f.saved.as_ref().map(|name| {
-        row()
+        let says = format!("Added “{name}” to your soundboard.");
+        readout(k)
             .key("saved")
             .role("status")
-            .w_full()
-            .px(12.0)
-            .py(8.0)
-            .gap(8.0)
+            .label(says.clone())
             .center_y()
-            .radius(10.0)
-            .fill(wash(k.c.page, accent(), 0.1))
-            .border(1.0, accent().alpha(0.35))
-            .child(icon(&CHECK, ICON).color(accent()))
+            .child(icon(&CHECK, ICON).color(k.c.icon_base))
             .child(
-                text(format!("Added “{name}” to your soundboard."))
+                text(says)
                     .font(SMALL)
                     .color(k.c.text_base)
                     .wrap()
                     .grow(1.0)
-                    .shrink(),
+                    .shrink()
+                    .a11y_hidden(),
             )
     });
     col()
@@ -144,7 +152,8 @@ pub fn find_page(s: &State, k: &Kit) -> El {
         .child(scrolling(
             col()
                 .key("find-body")
-                .children(notice(s, k))
+                // Room for the search field's edge at the top of the scroll view.
+                .pt(2.0)
                 .children(saved)
                 .child(search_box(s, k))
                 .children(results(s, f, k))
@@ -164,7 +173,7 @@ fn search_box(s: &State, k: &Kit) -> El {
         .on_edit(|s: &mut State| &mut s.find.query)
         .on_submit(|s: &mut State, _| s.search())
         .on_key(escape_goes_back)
-        .build(k)
+        .build(&slot(k))
         .key("search-field");
     let mut c = col().key("search").w_full().gap(8.0).child(
         row()
@@ -174,39 +183,40 @@ fn search_box(s: &State, k: &Kit) -> El {
             .child(col().grow(1.0).shrink().min_w(0.0).child(field))
             .child(
                 // As tall as the field beside it, with its corners.
-                Button::new("Search")
-                    .control_size(ControlSize::Large)
-                    .disabled(f.query.text.trim().is_empty())
-                    .on_press(State::search)
-                    .build(k)
-                    .radius(k.radius.md)
-                    .key("search-button"),
+                as_key(
+                    Button::new("Search")
+                        .control_size(ControlSize::Large)
+                        .disabled(f.query.text.trim().is_empty())
+                        .on_press(State::search)
+                        .build(k),
+                )
+                .radius(k.radius.md)
+                .key("search-button"),
             ),
     );
-    if s.settings.freesound_key.is_empty() {
-        c = c.child(
-            text("Searching Myinstants only.")
-                .font(SMALL)
-                .color(k.c.text_faint)
-                .wrap(),
-        );
-    }
+    // Shown while the page offers a key, as it opened: a key typed in changes the words, so
+    // the field doesn't jump.
     if f.key_first {
+        let searching = if s.settings.freesound_key.is_empty() {
+            "Searching Myinstants only."
+        } else {
+            "Searching Myinstants and Freesound."
+        };
+        c = c.child(text(searching).font(SMALL).color(k.c.text_faint).wrap());
         c = c.child(
-            Collapsible::new("Add a Freesound key", f.key_open)
-                .state(OPENABLE)
-                .on_toggle(|s: &mut State| s.find.key_open = !s.find.key_open)
-                .child(
-                    col()
-                        .w_full()
-                        .gap(8.0)
-                        .pb(4.0)
-                        .child(text(KEY_WHY).font(SMALL).color(k.c.text_muted).wrap())
-                        .child(key_field(f, k))
-                        .child(get_key_button(k)),
-                )
-                .build(k)
-                .key("freesound"),
+            disclosure(
+                k,
+                "Add a Freesound key",
+                f.key_open,
+                |s| s.find.key_open = !s.find.key_open,
+                col()
+                    .gap(8.0)
+                    .pb(4.0)
+                    .child(text(KEY_WHY).font(SMALL).color(k.c.text_muted).wrap())
+                    .child(key_field(f, k))
+                    .child(get_key_button(k)),
+            )
+            .key("freesound"),
         );
     }
     c
@@ -241,15 +251,8 @@ fn results(s: &State, f: &Find, k: &Kit) -> Option<El> {
         1 => format!("1 sound found for “{query}”"),
         n => format!("{n} sounds found for “{query}”"),
     };
-    let mut list = col()
-        .key("results")
-        .label(found.clone())
-        .w_full()
-        .px(12.0)
-        .py(4.0)
-        .radius(12.0)
-        .fill(k.c.layer_01)
-        .border(1.0, k.c.border_muted);
+    // Rows on the panel, a hairline between each: no box around them.
+    let mut list = col().key("results").label(found.clone()).w_full();
     for (i, hit) in f.hits.iter().enumerate() {
         if i > 0 {
             list = list.child(el().w_full().h(1.0).fill(k.c.border_muted));
@@ -292,14 +295,23 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
         row()
             .gap(4.0)
             .center_y()
-            .child(icon(&CHECK, ICON).color(accent()))
-            .child(text("Added").font(SMALL).color(accent()))
+            .child(icon(&CHECK, ICON).color(k.c.icon_muted))
+            .child(text("Added").font(SMALL).color(k.c.text_muted))
     } else {
-        Button::new("Add")
-            .icon(&PLUS)
-            .on_press(move |s: &mut State| s.add_hit(&u3))
-            .build(k)
-            .key(format!("add-{i}"))
+        as_key(
+            Button::new("Add")
+                .icon(&PLUS)
+                .on_press(move |s: &mut State| s.add_hit(&u3))
+                .build(k),
+        )
+        .key(format!("add-{i}"))
+        // It gives way to "Added": focus goes on to the next result that isn't downloading
+        // (whose buttons can't take it), or the link field.
+        .focus_return(
+            (i + 1..f.hits.len())
+                .find(|&j| !f.is_busy(&f.hits[j].url))
+                .map_or_else(|| "link-field".into(), |j| format!("hit-{j}")),
+        )
     });
     row()
         .key(format!("hit-{i}"))
@@ -368,7 +380,7 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
         .on_edit(|s: &mut State| &mut s.find.link)
         .on_submit(|s: &mut State, _| s.get_audio())
         .on_key(escape_goes_back)
-        .build(k)
+        .build(&slot(k))
         .key("link-field");
     let status = match &f.youtube {
         YouTube::Idle => None,
@@ -377,7 +389,7 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
         YouTube::Fetching => Some(working(k, "fetching", "Getting the audio…")),
         YouTube::Failed(e) => Some(problem(k, "youtube-problem", true, e)),
     };
-    card(k)
+    group(k)
         .key("youtube")
         .child(heading(
             k,
@@ -392,13 +404,15 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
                 .child(col().grow(1.0).shrink().min_w(0.0).child(field))
                 .child(
                     // As tall as the field beside it, with its corners.
-                    Button::new("Get audio")
-                        .control_size(ControlSize::Large)
-                        .disabled(busy || f.link.text.trim().is_empty())
-                        .on_press(State::get_audio)
-                        .build(k)
-                        .radius(k.radius.md)
-                        .key("get-audio"),
+                    as_key(
+                        Button::new("Get audio")
+                            .control_size(ControlSize::Large)
+                            .disabled(busy || f.link.text.trim().is_empty())
+                            .on_press(State::get_audio)
+                            .build(k),
+                    )
+                    .radius(k.radius.md)
+                    .key("get-audio"),
                 ),
         )
         .children(status)
@@ -407,29 +421,33 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
 /// Said once, before yt-dlp is first downloaded: a line in the card, with its buttons under the
 /// words.
 fn install_notice(k: &Kit) -> El {
+    let says = format!(
+        "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a free tool, from \
+         its official GitHub page. Warble keeps it up to date after\u{a0}that.",
+        youtube::TOOL_SIZE
+    );
     col()
         .key("install-notice")
+        // "Not now" closes it: focus goes back to the link.
+        .focus_return("link-field")
         .w_full()
         .gap(10.0)
         .child(
             row()
                 .role("status")
+                .label(says.clone())
                 .w_full()
                 .gap(8.0)
                 .items_start()
                 .child(icon(&WARNING, ICON).color(warn()).mt(1.0))
                 .child(
-                    text(format!(
-                        "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a \
-                         free tool, from its official GitHub page. Warble keeps it up to date \
-                         after\u{a0}that.",
-                        youtube::TOOL_SIZE
-                    ))
-                    .font(BODY)
-                    .color(k.c.text_base)
-                    .wrap()
-                    .grow(1.0)
-                    .shrink(),
+                    text(says)
+                        .font(BODY)
+                        .color(k.c.text_base)
+                        .wrap()
+                        .grow(1.0)
+                        .shrink()
+                        .a11y_hidden(),
                 ),
         )
         .child(
@@ -437,11 +455,13 @@ fn install_notice(k: &Kit) -> El {
                 .pl(24.0)
                 .gap(8.0)
                 .child(
-                    Button::new("Download yt-dlp")
-                        .variant(ButtonVariant::Submit)
-                        .on_press(State::install_youtube_tool)
-                        .build(k)
-                        .key("install-yt-dlp"),
+                    as_key(
+                        Button::new("Download yt-dlp")
+                            .variant(ButtonVariant::Submit)
+                            .on_press(State::install_youtube_tool)
+                            .build(k),
+                    )
+                    .key("install-yt-dlp"),
                 )
                 .child(
                     Button::new("Not now")
@@ -454,7 +474,7 @@ fn install_notice(k: &Kit) -> El {
 }
 
 fn sites_card(f: &Find, k: &Kit) -> El {
-    let mut sites = col().w_full().gap(4.0).pb(8.0);
+    let mut sites = col().w_full().gap(4.0).pb(4.0);
     for (i, site) in SITES.iter().enumerate() {
         let open = open_url(site.url);
         sites = sites.child(
@@ -464,12 +484,14 @@ fn sites_card(f: &Find, k: &Kit) -> El {
                 .label(site.name)
                 .description(site.note)
                 .focusable(true)
-                .w_full()
+                // The hover fill reaches past the words and icons, which line up with the
+                // page's edges (stretched, so the margins widen it on both sides).
+                .mx(-8.0)
                 .px(8.0)
                 .py(7.0)
                 .gap(10.0)
                 .center_y()
-                .radius(8.0)
+                .radius(k.radius.md)
                 .cursor(Cursor::Pointer)
                 .hover(k.c.hover)
                 .press(k.c.pressed)
@@ -494,21 +516,19 @@ fn sites_card(f: &Find, k: &Kit) -> El {
                 .child(icon(&OPEN, ICON).color(k.c.icon_muted)),
         );
     }
-    // The section's trigger is its own 32-point row: less padding keeps its title where a
-    // card's heading sits.
-    card(k).key("sites").py(6.0).child(
-        Collapsible::new("Good places to find sounds", f.sites_open)
-            .state(OPENABLE)
-            .on_toggle(|s: &mut State| s.find.sites_open = !s.find.sites_open)
-            .child(sites)
-            .build(k)
-            .key("sites-section"),
+    // The section's trigger is its own 32-point row: less room above keeps its title where
+    // a group's title sits.
+    group(k).key("sites").pt(12.0).child(
+        disclosure(
+            k,
+            "Good places to find sounds",
+            f.sites_open,
+            |s| s.find.sites_open = !s.find.sites_open,
+            sites,
+        )
+        .key("sites-section"),
     )
 }
-
-/// The kit shows a section's arrow only on hover or once open. Shown always, so a closed
-/// section looks like it opens.
-const OPENABLE: rune_kit::State = rune_kit::State::Hover;
 
 const KEY_WHY: &str =
     "Freesound’s search needs a free key. Make one, then paste it here\u{a0}once.";
@@ -522,23 +542,25 @@ fn key_field(f: &Find, k: &Kit) -> El {
         .on_edit(|s: &mut State| &mut s.find.key)
         .on_change(|s: &mut State, _| s.set_freesound_key())
         .on_key(escape_goes_back)
-        .build(k)
+        .build(&slot(k))
         .key("key-field")
 }
 
 fn get_key_button(k: &Kit) -> El {
     row().child(
-        Button::new("Get a free key")
-            .icon(&OPEN)
-            .on_press_tx(open_url(FREESOUND_KEY_URL))
-            .build(k)
-            .key("get-key"),
+        as_key(
+            Button::new("Get a free key")
+                .icon(&OPEN)
+                .on_press_tx(open_url(FREESOUND_KEY_URL))
+                .build(k),
+        )
+        .key("get-key"),
     )
 }
 
 /// The Freesound key once one is set, at the bottom of the page.
 fn key_card(f: &Find, k: &Kit) -> El {
-    card(k)
+    group(k)
         .key("freesound")
         .child(heading(k, "Freesound key", KEY_WHY))
         .child(key_field(f, k))
@@ -569,7 +591,7 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         .on_edit(|s: &mut State| &mut s.find.trim_name)
         .on_submit(|s: &mut State, _| s.trim_save())
         .on_key(escape_goes_back)
-        .build(k)
+        .build(&slot(k))
         .key("trim-name");
     let keeping = if t.is_whole() {
         format!("Keeping all {}", trim::clock(t.duration()))
@@ -585,22 +607,26 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         .gap(8.0)
         .center_y()
         .child(
-            Button::new(if playing { "Stop" } else { "Play selection" })
-                .icon(if playing { &STOP } else { &PLAY })
-                .help("Plays in your headphones only")
-                .on_press(State::trim_play)
-                .build(k)
-                .key("trim-play"),
+            as_key(
+                Button::new(if playing { "Stop" } else { "Play selection" })
+                    .icon(if playing { &STOP } else { &PLAY })
+                    .help("Plays in your headphones only")
+                    .on_press(State::trim_play)
+                    .build(k),
+            )
+            .key("trim-play"),
         )
         .child(el().grow(1.0))
         .child(
-            Button::new(if t.saving { "Adding…" } else { "Add sound" })
-                .icon(&PLUS)
-                .variant(ButtonVariant::Submit)
-                .disabled(t.saving)
-                .on_press(State::trim_save)
-                .build(k)
-                .key("trim-save"),
+            as_key(
+                Button::new(if t.saving { "Adding…" } else { "Add sound" })
+                    .icon(&PLUS)
+                    .variant(ButtonVariant::Submit)
+                    .disabled(t.saving)
+                    .on_press(State::trim_save)
+                    .build(k),
+            )
+            .key("trim-save"),
         );
     let mut page = col()
         .key("trim")
@@ -612,9 +638,10 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
     }
     page.child(page_bar(k, "Trim", State::close_trim))
         .child(scrolling(
-            col().key("trim-body").children(notice(s, k)).child(
-                card(k)
+            col().key("trim-body").pt(2.0).child(
+                col()
                     .key("trim-card")
+                    .w_full()
                     .gap(14.0)
                     .child(
                         col()
@@ -686,9 +713,10 @@ fn set_handle(t: &mut Trim, end: bool, at: f64) {
     if end { t.set_end(at) } else { t.set_start(at) }
 }
 
-/// The clip's waveform `w` points wide with the selection lit, a handle at each end (drag, or
-/// focus and use the arrow keys), and the playhead while the selection plays. Pressing the
-/// waveform moves the nearer handle there.
+/// The clip's waveform `w` points wide in a well set into the panel, with the part you keep
+/// in the panel's ink, a handle at each end (drag, or focus and use the arrow keys), and the
+/// playhead while the selection plays. Pressing the waveform moves the nearer handle there.
+/// It all plays in your headphones only, so none of it takes the LED colour.
 fn waveform(s: &State, t: &Trim, w: f32, k: &Kit) -> El {
     let inner = (w - 2.0 * EDGE).max(1.0);
     let d = t.duration().max(1e-9);
@@ -708,22 +736,29 @@ fn waveform(s: &State, t: &Trim, w: f32, k: &Kit) -> El {
         bars = bars.child(
             el().grow(1.0)
                 .h((p * (WAVE_H - 20.0)).max(2.0))
-                .radius(1.0)
-                .fill(if lit { accent() } else { k.c.border_strong }),
+                .radius(k.radius.xs)
+                .fill(if lit { tone(0.88) } else { tone(0.40) }),
         );
     }
     let selection = el()
         .absolute(x(a), 0.0)
         .size((b - a) * inner, WAVE_H)
-        .fill(accent().alpha(0.08))
+        .fill(Color::WHITE.alpha(0.06))
         .a11y_hidden();
 
     let mut wave = el()
         .key("wave")
         .w_full()
         .h(WAVE_H)
-        .radius(8.0)
-        .fill(k.c.layer_02)
+        .radius(k.radius.lg)
+        .fill(recess())
+        .box_shadow(Shadow {
+            y: 1.0,
+            blur: 3.0,
+            color: Color::BLACK.alpha(0.6),
+            inset: true,
+            ..Shadow::default()
+        })
         .cursor(Cursor::Pointer)
         .on_drag(move |s: &mut State, dr: &mut Drag, tx: &mut Tx| {
             let Some(t) = &mut s.trim else { return };
@@ -776,6 +811,7 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
         .center()
         .cursor(Cursor::ResizeColumn)
         .on_step(move |s: &mut State, steps, _| s.step_trim(end, steps))
+        .on_step_limit(move |s: &mut State, max, _| s.trim_limit(end, max))
         .on_drag(move |s: &mut State, dr: &mut Drag, tx: &mut Tx| {
             let Some(t) = &mut s.trim else { return };
             match dr.phase {
@@ -798,13 +834,10 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
         .child(
             el().absolute(EDGE - 1.0, 0.0)
                 .size(2.0, WAVE_H)
-                .fill(accent()),
+                .fill(tone(0.88)),
         )
-        .child(el().size(10.0, 26.0).radius(5.0).fill(k.c.knob).shadow(
-            1.0,
-            3.0,
-            rune::Color::BLACK.alpha(0.45),
-        ))
+        // A cap like a fader's, to grab.
+        .child(fader_cap(k, (10.0, 26.0), (2.0, 10.0)))
 }
 
 #[cfg(test)]

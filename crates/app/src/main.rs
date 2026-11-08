@@ -27,6 +27,7 @@ fn main() {
     let app = App::new(AppSpec {
         min_size: Some((360.0, 540.0)),
         scenes: ui::SCENES,
+        fonts: ui::FONTS,
         poll: Some(State::poll),
         // Escape leaves Find sounds or Trim even when nothing on the page has focus.
         on_key: Some(find_view::escape_goes_back),
