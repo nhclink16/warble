@@ -39,12 +39,12 @@ pub const SITES: [Site; 4] = [
     Site {
         name: "Pixabay sound effects",
         url: "https://pixabay.com/sound-effects/",
-        note: "Free to use without credit, under the Pixabay licence.",
+        note: "Free to use without credit, under the Pixabay\u{a0}licence.",
     },
     Site {
         name: "BBC Sound Effects",
         url: "https://sound-effects.bbcrewind.co.uk/",
-        note: "Free for personal use only (the RemArc licence).",
+        note: "Free for personal use only (the RemArc\u{a0}licence).",
     },
 ];
 
