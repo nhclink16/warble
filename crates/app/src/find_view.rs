@@ -14,8 +14,8 @@ use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
     BACK, BODY, CHECK, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
-    SMALL, STOP, TITLE, WARNING, as_key, cap, danger, disclosure, group, notice, readout, recess,
-    scrolling, slot, title_row, tone, warn,
+    SMALL, STOP, TITLE, WARNING, as_key, danger, disclosure, fader_cap, group, notice, readout,
+    recess, scrolling, slot, title_row, tone, warn,
 };
 use crate::youtube;
 
@@ -810,16 +810,7 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
                 .fill(tone(0.88)),
         )
         // A cap like a fader's, to grab.
-        .child(
-            el().size(10.0, 26.0)
-                .radius(k.radius.xs)
-                .center()
-                .fill(cap())
-                .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
-                .border_gradient(1.0, tone(0.96), tone(0.55))
-                .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))
-                .child(el().size(2.0, 10.0).fill(tone(0.3))),
-        )
+        .child(fader_cap(k, (10.0, 26.0), (2.0, 10.0)))
 }
 
 #[cfg(test)]

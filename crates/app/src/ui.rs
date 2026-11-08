@@ -67,6 +67,9 @@ pub(crate) const DIGIT: TextStyle = TextStyle::new(18.0, 600.0)
     .family(PANEL)
     .variations(PANEL_WIDTH);
 
+/// A pad's corners: the radius scale's `lg`, which pads use before the kit is to hand.
+const PAD_RADIUS: f32 = 6.0;
+
 /// Icons beside text, as rune-kit's buttons draw them (a 1.5 point stroke).
 pub(crate) const ICON: f32 = 16.0;
 /// The large glyphs printed on pads: the voices, the drop pad's plus, the logo.
@@ -99,6 +102,18 @@ fn filled() -> Color {
 /// The light cap you grab: a fader's, a switch's, a Trim handle's.
 pub(crate) fn cap() -> Color {
     tone(0.9)
+}
+
+/// A fader cap `w` by `h`, raised and lit from the top, with its grip line (`grip` w by h).
+pub(crate) fn fader_cap(k: &Kit, (w, h): (f32, f32), grip: (f32, f32)) -> El {
+    el().size(w, h)
+        .radius(k.radius.xs)
+        .center()
+        .fill(cap())
+        .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
+        .border_gradient(1.0, tone(0.96), tone(0.55))
+        .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))
+        .child(el().size(grip.0, grip.1).fill(tone(0.3)))
 }
 /// The LED, the one colour that means "going into the call". It lights only for the mic
 /// going out (the Live dot), the voice effect and the chosen voice while it's on, a sound
@@ -178,7 +193,7 @@ pub fn kit() -> Kit {
         xs: 2.0,
         sm: 4.0,
         md: 5.0,
-        lg: 6.0,
+        lg: PAD_RADIUS,
         xl: 8.0,
     };
     k
@@ -423,7 +438,7 @@ pub(crate) fn raise(e: El, lamp: Lamp) -> El {
         ),
     };
     let e = e
-        .radius(6.0)
+        .radius(PAD_RADIUS)
         .fill(fill)
         .gradient(Color::WHITE.alpha(0.03), Color::BLACK.alpha(0.14))
         .border_gradient(1.0, rim_top, rim_bottom)
@@ -963,10 +978,11 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
                 .child(
                     text((i + 1).to_string())
                         .font(NUMBER)
-                        .color(if selected {
-                            k.c.text_muted
-                        } else {
-                            k.c.text_faint
+                        // A lit pad's glow is lighter behind it, so its number takes the ink.
+                        .color(match lamp {
+                            Lamp::Lit => k.c.text_base,
+                            Lamp::Latched => k.c.text_muted,
+                            Lamp::Off => k.c.text_faint,
                         })
                         .a11y_hidden(),
                 )
@@ -1171,7 +1187,8 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
                 .size(w, bar)
                 .radius(k.radius.xs)
                 .fill(tone(0.13))
-                .border_gradient(1.0, tone(0.1), tone(0.3)),
+                // The slot's whole length shows at 3:1, like a switch's when off.
+                .border(1.0, edge()),
         )
         .child(
             el().absolute(0.0, (h - bar) / 2.0)
@@ -1180,17 +1197,7 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
                 // Off, a fader still works: only its fill dims, so its text stays readable.
                 .fill(if sl.enabled { filled() } else { tone(0.42) }),
         )
-        .child(
-            el().absolute(pos * travel, 1.0)
-                .size(knob, h - 2.0)
-                .radius(k.radius.xs)
-                .center()
-                .fill(cap())
-                .gradient(Color::WHITE.alpha(0.18), Color::BLACK.alpha(0.2))
-                .border_gradient(1.0, tone(0.96), tone(0.55))
-                .shadow(2.0, 4.0, Color::BLACK.alpha(0.6))
-                .child(el().size(knob - 4.0, 2.0).fill(tone(0.3))),
-        );
+        .child(fader_cap(k, (knob, h - 2.0), (knob - 4.0, 2.0)).absolute(pos * travel, 1.0));
     row()
         .w_full()
         .h(h)
