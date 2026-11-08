@@ -20,6 +20,11 @@ pub const TOOL_SIZE: &str = "about 24 MB";
 pub const MAX_SECONDS: u64 = 20 * 60;
 /// How often it asks yt-dlp to update itself.
 const UPDATE_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+/// The way out when a link fails: dropped videos open in the trim editor.
+const DROP_IT: &str = "save the video as an MP4 and drop it on this window.";
+/// Audio Warble can't decode.
+pub const UNREADABLE: &str =
+    "Warble can’t read this video’s audio. Save the video as an MP4 and drop it on this window.";
 
 /// One yt-dlp at a time: an update replaces the program a fetch would run.
 static RUN: Mutex<()> = Mutex::new(());
@@ -37,7 +42,7 @@ fn stamp(dir: &Path) -> PathBuf {
 pub fn install(dir: &Path) -> Result<(), String> {
     let _one = RUN.lock().unwrap_or_else(|e| e.into_inner());
     let tool = tool_path(dir);
-    let failed = |_| "Couldn't download yt-dlp. Check your internet.".to_string();
+    let failed = |_| "The download didn’t finish. Check your internet, then try again.".to_string();
     std::fs::create_dir_all(tool.parent().unwrap_or(dir)).map_err(failed)?;
     crate::library::fetch_to(&format!("{RELEASES}{TOOL}"), &tool, 200 << 20).map_err(failed)?;
     #[cfg(unix)]
@@ -124,11 +129,12 @@ pub fn looks_like_link(text: &str) -> bool {
 /// an X post's text carries).
 pub fn fetch(dir: &Path, url: &str, out: &Path) -> Result<(PathBuf, String), String> {
     let _one = RUN.lock().unwrap_or_else(|e| e.into_inner());
-    std::fs::create_dir_all(out).map_err(|e| format!("Couldn't save the audio: {e}"))?;
+    let failed = || format!("Couldn’t get the audio. Try again, or {DROP_IT}");
+    std::fs::create_dir_all(out).map_err(|_| failed())?;
     let output = command(&tool_path(dir))
         .args(args(url.trim(), out))
         .output()
-        .map_err(|_| "Couldn't run yt-dlp. Try again.".to_string())?;
+        .map_err(|_| failed())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     if !output.status.success() {
         return Err(plain_error(&String::from_utf8_lossy(&output.stderr)));
@@ -153,60 +159,58 @@ pub fn fetch(dir: &Path, url: &str, out: &Path) -> Result<(PathBuf, String), Str
         .filter(|w| !w.starts_with("http"))
         .collect();
     let title = if words.is_empty() {
-        "Clip".to_string()
+        "Sound".to_string()
     } else {
         words.join(" ")
     };
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ["webm", "opus"].iter().any(|e| e.eq_ignore_ascii_case(ext)) {
         let _ = std::fs::remove_file(&file);
-        return Err(
-            "That video's audio is only in Opus, which Warble can't read. Try another.".into(),
-        );
+        return Err(UNREADABLE.into());
     }
     Ok((file, title))
 }
 
-/// yt-dlp's error, in a short plain sentence.
+/// yt-dlp's error, in a short plain sentence that says what to do next.
 fn plain_error(stderr: &str) -> String {
     let e = stderr.to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
     if has(&["unsupported url", "is not a valid url"]) {
-        "That link isn't a video yt-dlp can get.".into()
+        "Warble can’t get audio from that link. Paste a link to a YouTube or X video.".into()
     } else if has(&["no video could be found"]) {
-        "That post has no video.".into()
+        "That post has no video. Paste a link to a post with one.".into()
     } else if has(&[
         "nsfw tweet requires authentication",
         "protected tweet",
         "you are not authorized",
     ]) {
-        "That post needs a signed-in X account, so Warble can't get it.".into()
+        format!("That post needs a signed-in X account. Instead, {DROP_IT}")
     } else if has(&["could not retrieve guest token"]) {
-        "X is blocking downloads right now. Try again later.".into()
+        format!("X is blocking downloads right now. Try again later, or {DROP_IT}")
     } else if has(&[
         "requested tweet is unavailable",
         "tweetunavailable",
         "no longer exists",
     ]) {
-        "That post isn't available.".into()
+        "That post isn’t available. Check the link.".into()
     } else if has(&["private video"]) {
-        "That video is private.".into()
+        "That video is private. Try another video.".into()
     } else if has(&[
         "confirm your age",
         "age-restricted",
         "inappropriate for some users",
     ]) {
-        "That video is age-restricted, so it can't be fetched.".into()
+        format!("That video is age-restricted. Instead, {DROP_IT}")
     } else if has(&["not a bot"]) {
-        "YouTube is blocking downloads right now. Try again later.".into()
+        format!("YouTube is blocking downloads right now. Try again later, or {DROP_IT}")
     } else if has(&[
         "video unavailable",
         "this video is not available",
         "has been removed",
     ]) {
-        "That video isn't available.".into()
+        "That video isn’t available. Check the link.".into()
     } else if has(&["requested format is not available"]) {
-        "That video has no audio Warble can read.".into()
+        UNREADABLE.into()
     } else if has(&[
         "getaddrinfo",
         "name resolution",
@@ -214,9 +218,9 @@ fn plain_error(stderr: &str) -> String {
         "connection",
         "network",
     ]) {
-        "Couldn't reach the site. Check your internet.".into()
+        "Couldn’t reach the site. Check your internet.".into()
     } else {
-        "Couldn't get that video's audio.".into()
+        format!("Couldn’t get that video’s audio. Try again, or {DROP_IT}")
     }
 }
 
@@ -270,32 +274,60 @@ mod tests {
             plain_error(
                 "ERROR: [youtube] abc: Private video. Sign in if you've been granted access"
             ),
-            "That video is private."
+            "That video is private. Try another video."
         );
         assert_eq!(
             plain_error("ERROR: [youtube] abc: Video unavailable"),
-            "That video isn't available."
+            "That video isn’t available. Check the link."
         );
         assert_eq!(
             plain_error("ERROR: Unsupported URL: https://example.com/"),
-            "That link isn't a video yt-dlp can get."
+            "Warble can’t get audio from that link. Paste a link to a YouTube or X video."
         );
         assert_eq!(
             plain_error("ERROR: [twitter] 123: No video could be found in this tweet"),
-            "That post has no video."
+            "That post has no video. Paste a link to a post with one."
         );
         assert_eq!(
             plain_error("ERROR: [twitter] 123: NSFW tweet requires authentication."),
-            "That post needs a signed-in X account, so Warble can't get it."
+            "That post needs a signed-in X account. Instead, save the video as an MP4 and drop \
+             it on this window."
         );
         assert_eq!(
             plain_error("ERROR: [twitter:broadcast] 1rmx: Broadcast no longer exists"),
-            "That post isn't available."
+            "That post isn’t available. Check the link."
+        );
+        assert_eq!(
+            plain_error("ERROR: [youtube] abc: Sign in to confirm you're not a bot"),
+            "YouTube is blocking downloads right now. Try again later, or save the video as an \
+             MP4 and drop it on this window."
         );
         assert_eq!(
             plain_error("something odd"),
-            "Couldn't get that video's audio."
+            "Couldn’t get that video’s audio. Try again, or save the video as an MP4 and drop it \
+             on this window."
         );
+        // What people read: plain words, curly apostrophes, no tool or codec names.
+        for e in [
+            "unsupported url",
+            "no video could be found",
+            "protected tweet",
+            "could not retrieve guest token",
+            "no longer exists",
+            "private video",
+            "age-restricted",
+            "not a bot",
+            "video unavailable",
+            "requested format is not available",
+            "timed out",
+            "odd",
+        ] {
+            let said = plain_error(e);
+            assert!(!said.contains('\''), "{said}");
+            for word in ["yt-dlp", "Opus", "fetch"] {
+                assert!(!said.contains(word), "{said}");
+            }
+        }
         assert!(tool_path(Path::new("cfg")).starts_with(Path::new("cfg").join("bin")));
     }
 

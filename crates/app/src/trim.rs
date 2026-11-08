@@ -93,7 +93,7 @@ pub fn file_name(name: &str) -> String {
     let name = name.trim();
     format!(
         "{}.wav",
-        safe_name(if name.is_empty() { "Clip" } else { name })
+        safe_name(if name.is_empty() { "Sound" } else { name })
     )
 }
 
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(t.step(), 0.1);
         assert_eq!(file_name("  Bruh "), "Bruh.wav");
         assert_eq!(file_name("what?"), "what.wav");
-        assert_eq!(file_name(" "), "Clip.wav");
+        assert_eq!(file_name(" "), "Sound.wav");
     }
 
     #[test]

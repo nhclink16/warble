@@ -4,7 +4,7 @@ A lightweight voice changer and soundboard for Discord calls and game chat on Wi
 Built with Rust and [Rune](https://github.com/anomalyco/rune).
 
 - **Voice effects:** Normal, Deep, Chipmunk, Robot, Radio, Echo, Demon, Cave.
-- **Soundboard:** drop in WAV, MP3, OGG or FLAC clips and play them into the call.
+- **Soundboard:** drop in WAV, MP3, OGG or FLAC sounds and play them into the call.
 - **Find sounds:** search Myinstants and Freesound from the *Soundboard* tab, preview a result in
   your headphones only, and add it. Freesound needs a free API key (<https://freesound.org/apiv2/apply>),
   pasted once on that page; without one, Warble searches Myinstants only.
@@ -15,7 +15,7 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
 - **Trim:** any tile's scissors button, or a search result's, opens the same trim editor. So does dropping a
   video file (MP4, MOV, M4V) or an M4A on the window.
 - **Hear yourself:** listen to your changed voice in your headphones.
-- **Hear sounds:** soundboard clips play in your headphones too (on by default; switch it off on the *Soundboard* tab).
+- **Hear sounds:** soundboard sounds play in your headphones too (on by default; switch it off on the *Soundboard* tab).
 - **Phone remote:** play sounds, change your voice and set the volumes from your phone's browser.
   Turn it on under *Setup → Phone remote* and scan the QR code. See [Phone remote](#phone-remote).
 - **Hotkeys** that work while a game has focus, and a tray icon so it keeps running when the window is closed.
@@ -58,7 +58,7 @@ works in any phone browser. *Add to Home Screen* keeps it one tap away.
 - **Windows asks once** whether Warble may use the network: choose *Allow*. If the phone can't connect,
   check that the PC's Wi-Fi is set to *Private* in Windows settings, and that Warble is allowed in
   *Windows Security → Firewall & network protection → Allow an app through firewall*.
-- **The code holds a secret.** Only phones that scanned it can use the remote. *New code* signs every phone out.
+- **The code holds a secret.** Only phones that scanned it can use the remote. *Sign out all phones* makes a new code, so each phone has to scan again.
 - **Sending a link** from the phone opens it on the PC, in the trim editor, where you cut and save it.
 - Warble listens on port 47823 (or a free port, when another app has that one), over plain HTTP on your
   own network. Use it on your home Wi-Fi or over Tailscale, not on shared or public Wi-Fi, where another

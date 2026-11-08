@@ -101,7 +101,7 @@ pub fn search(query: &str, freesound_key: &str) -> Found {
     });
     let problem = match (&mi, &fs) {
         (Err(Fail::Offline), Some(Err(Fail::Offline))) => {
-            Some("Couldn't reach Myinstants or Freesound. Check your internet.".into())
+            Some("Couldn’t reach Myinstants or Freesound. Check your internet.".into())
         }
         (Err(e), _) => Some(say(e, Source::Myinstants)),
         (_, Some(Err(e))) => Some(say(e, Source::Freesound)),
@@ -124,7 +124,7 @@ pub fn search(query: &str, freesound_key: &str) -> Found {
 
 fn say(fail: &Fail, site: Source) -> String {
     match fail {
-        Fail::Offline => format!("Couldn't reach {}. Check your internet.", site.name()),
+        Fail::Offline => format!("Couldn’t reach {}. Check your internet.", site.name()),
         Fail::Said(why) => why.clone(),
     }
 }
@@ -168,7 +168,7 @@ fn search_myinstants(query: &str) -> Result<Vec<Hit>, Fail> {
     if hits.is_empty() && html.contains("class=\"small-button\"") {
         // Sound buttons we can't read: Myinstants changed its page.
         return Err(Fail::Said(
-            "Couldn't read Myinstants' results. Its page may have changed.".into(),
+            "Couldn’t read Myinstants’ results. Its page may have changed.".into(),
         ));
     }
     Ok(hits)
@@ -273,7 +273,7 @@ fn search_freesound(query: &str, key: &str) -> Result<Vec<Hit>, Fail> {
         200 => {}
         401 | 403 => {
             return Err(Fail::Said(
-                "Freesound didn't accept your key. Check it below.".into(),
+                "Freesound didn’t accept your key. Check it, or make a new one.".into(),
             ));
         }
         429 => {
@@ -370,7 +370,12 @@ pub fn download(hit: &Hit) -> Result<PathBuf, String> {
         .join(format!("{:016x}", hasher.finish()));
     let path = dir.join(format!("{}.{}", safe_name(&hit.name), extension(&hit.url)));
     if !path.is_file() {
-        let offline = || format!("Couldn't download it from {}.", hit.source.name());
+        let offline = || {
+            format!(
+                "Couldn’t download it from {}. Check your internet, then try again.",
+                hit.source.name()
+            )
+        };
         std::fs::create_dir_all(&dir).map_err(|_| offline())?;
         fetch_to(&hit.url, &path, MAX_SOUND_BYTES).map_err(|_| offline())?;
     }
