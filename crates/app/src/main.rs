@@ -8,6 +8,8 @@ mod find;
 mod find_view;
 mod icon;
 mod library;
+mod remote;
+mod remote_view;
 mod settings;
 mod state;
 mod trim;
@@ -52,6 +54,7 @@ fn main() {
             s.handle = Some(for_state);
             s.sync_tray();
             s.load_saved_sounds();
+            s.sync_remote();
             s
         })
         .keep_running()

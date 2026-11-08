@@ -12,6 +12,7 @@ use rune_kit::{
 use warble_engine::{DeviceInfo, Preset};
 
 use crate::find_view;
+use crate::remote_view;
 use crate::settings::DROP_EXTS;
 use crate::state::{self, Picker, SEGMENTS, Sound, State, Tab};
 
@@ -273,7 +274,7 @@ glyph!(
     )
 );
 
-fn preset_icon(p: Preset) -> &'static Icon {
+pub(crate) fn preset_icon(p: Preset) -> &'static Icon {
     match p {
         Preset::Normal => &NORMAL,
         Preset::Deep => &DEEP,
@@ -595,10 +596,10 @@ fn levels_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
 }
 
 /// Mic gain runs 25%..400% with 100% in the middle of the slider.
-fn gain_pos(gain: f32) -> f32 {
+pub(crate) fn gain_pos(gain: f32) -> f32 {
     (gain.log(4.0) + 1.0) / 2.0
 }
-fn pos_gain(pos: f32) -> f32 {
+pub(crate) fn pos_gain(pos: f32) -> f32 {
     let g = 4f32.powf(pos * 2.0 - 1.0);
     // Snap to 100% near the middle, where most people want it.
     if (g - 1.0).abs() < 0.04 { 1.0 } else { g }
@@ -1097,6 +1098,7 @@ fn setup(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
         page = page.child(cable_callout(k));
     }
     page.child(devices_card(s, k, layer))
+        .child(remote_view::remote_card(s, k))
         .child(discord_card(k))
         .child(hotkeys_card(s, k))
 }
@@ -1446,6 +1448,9 @@ pub const SCENES: &[Scene] = &[
         ];
     }),
     ("drop", |s| s.drop_hover = true),
+    ("remote", remote_view::scenes::on),
+    ("remote-tailscale", remote_view::scenes::tailscale),
+    ("remote-no-network", remote_view::scenes::no_network),
     ("find-start", find_view::scenes::start),
     ("find", find_view::scenes::results),
     ("find-offline", find_view::scenes::offline),

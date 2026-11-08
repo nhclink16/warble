@@ -31,6 +31,10 @@ pub struct Settings {
     pub hear_sounds: bool,
     /// The user's own Freesound API key; empty searches Myinstants only.
     pub freesound_key: String,
+    /// The phone remote: off until it's turned on, on the Setup tab.
+    pub remote: bool,
+    /// The secret in the remote's link (32 hex digits). A new one signs every phone out.
+    pub remote_key: String,
 }
 
 impl Default for Settings {
@@ -47,6 +51,8 @@ impl Default for Settings {
             sound_volume: 0.8,
             hear_sounds: true,
             freesound_key: String::new(),
+            remote: false,
+            remote_key: String::new(),
         }
     }
 }

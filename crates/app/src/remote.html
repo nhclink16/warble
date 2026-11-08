@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0e13">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Warble">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="icon" href="/icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Warble</title>
+<style>
+:root {
+  --page: #0c0e13;
+  --layer: #15171c;
+  --line: #1e2025;
+  --raised: #23252a;
+  --text: #eef0f4;
+  --muted: #a6a9af;
+  --faint: #7b7e84;
+  --accent: #51daa7;
+  --ink: #0f1a1b;
+  --chosen: #213230;
+  --warn: oklch(0.83 0.13 80);
+  --danger: oklch(0.70 0.16 25);
+  --gap: 12px;
+  --pad: 16px;
+  font: 15px/1.4 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--page);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  min-height: 100dvh;
+  padding: calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + var(--pad))
+    calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + var(--pad));
+  background: var(--page);
+}
+body.voice-tab { padding-bottom: calc(env(safe-area-inset-bottom) + 24px); }
+button, input { font: inherit; color: inherit; }
+button { border: 0; background: none; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+header { display: flex; align-items: center; gap: 10px; height: 36px; }
+.logo { width: 28px; height: 28px; border-radius: 7.5px; background: var(--accent); color: var(--ink); display: grid; place-items: center; flex: none; }
+.logo svg { width: 20px; height: 20px; }
+h1 { font-size: 17px; font-weight: 650; flex: 1; letter-spacing: -0.005em; }
+.pill { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 14px; font-size: 13.5px; font-weight: 500; max-width: 60%;
+  --tone: var(--accent); color: var(--tone); border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent); background: color-mix(in oklab, var(--tone) 12%, var(--page)); }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
+.pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.warn { --tone: var(--warn); } .pill.danger { --tone: var(--danger); } .pill.muted { --tone: var(--muted); }
+
+.tabs { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 0 var(--pad); padding: 3px; gap: 3px; border-radius: 10px; background: var(--layer); border: 1px solid var(--line); }
+.tabs button { height: 36px; border-radius: 7px; color: var(--muted); font-weight: 500; }
+.tabs button[aria-selected="true"] { background: var(--page); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
+
+main { display: grid; gap: var(--gap); }
+.card { background: var(--layer); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: var(--gap); }
+h2, .title { display: block; font-size: 15px; font-weight: 600; }
+.small { font-size: 13px; color: var(--muted); }
+.row { display: flex; align-items: center; gap: var(--gap); }
+.grow { flex: 1; min-width: 0; }
+
+/* Sounds */
+.sounds { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+@media (min-width: 520px) { .sounds { grid-template-columns: repeat(3, 1fr); } }
+.tile { position: relative; min-height: 78px; padding: 11px 12px 30px; border-radius: 10px; text-align: left; background: var(--layer); border: 1px solid var(--line);
+  font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; transition: transform 80ms ease-out, background-color 120ms; }
+.tile .name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tile svg { position: absolute; right: 11px; bottom: 10px; width: 16px; height: 16px; color: var(--faint); }
+.tile:active { transform: scale(0.97); background: var(--raised); }
+.tile.playing { background: var(--chosen); border: 2px solid var(--accent); padding: 10px 11px 29px; color: var(--accent); }
+.tile.playing svg { color: var(--accent); right: 10px; bottom: 9px; }
+.search { width: 100%; height: 42px; padding: 0 14px; border-radius: 10px; background: var(--layer); border: 1px solid var(--line); outline: none; }
+.search::placeholder, .link input::placeholder { color: var(--faint); }
+.search:focus, .link input:focus { border-color: color-mix(in oklab, var(--accent) 60%, var(--line)); }
+.empty { padding: 28px 18px; text-align: center; display: grid; gap: 6px; justify-items: center; }
+
+.stopbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px calc(env(safe-area-inset-right) + var(--pad)) calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + var(--pad));
+  background: color-mix(in oklab, var(--page) 88%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
+.stop { width: 100%; height: 54px; border-radius: 12px; background: var(--text); color: var(--page); font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+.stop svg { width: 16px; height: 16px; }
+.stop:active { transform: scale(0.985); }
+.toast { position: fixed; left: var(--pad); right: var(--pad); bottom: calc(env(safe-area-inset-bottom) + 84px); padding: 11px 14px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); font-size: 14px; }
+.voice-tab .toast { bottom: calc(env(safe-area-inset-bottom) + 16px); }
+
+/* Voice */
+.effect { display: flex; align-items: center; gap: var(--gap); width: 100%; min-height: 70px; padding: 0 14px 0 16px; text-align: left; border-radius: 12px; background: var(--layer); border: 1px solid var(--line); }
+.effect.on { background: #1c2627; border-color: #28604e; }
+.effect .small { display: block; margin-top: 3px; }
+.presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.preset { display: grid; justify-items: center; gap: 5px; padding: 12px 2px 11px; border-radius: 10px; background: var(--layer); border: 1px solid var(--line); color: var(--muted); font-size: 13.5px; font-weight: 500; }
+.preset svg { width: 22px; height: 22px; }
+.preset:active { background: var(--raised); }
+.preset[aria-checked="true"] { background: var(--chosen); border: 2px solid var(--accent); padding: 11px 1px 10px; color: var(--text); }
+.preset[aria-checked="true"] svg { color: var(--accent); }
+.presets.off .preset[aria-checked="true"] { border-color: var(--faint); background: var(--raised); }
+.presets.off .preset[aria-checked="true"] svg { color: var(--muted); }
+
+/* Controls */
+.switch { width: 46px; height: 28px; border-radius: 14px; background: var(--raised); position: relative; flex: none; transition: background-color 150ms; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #f5f6f8; box-shadow: 0 1px 3px #0008; transition: transform 150ms; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(18px); }
+.slider { display: grid; grid-template-columns: 76px 1fr 46px; align-items: center; gap: 10px; min-height: 36px; }
+.slider label { color: var(--muted); font-weight: 500; font-size: 14px; }
+.slider output { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
+.slider.off { opacity: 0.55; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 36px; background: transparent; margin: 0; --pos: 50%; touch-action: pan-y; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--fill, var(--accent)) var(--pos), var(--raised) var(--pos)); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--fill, var(--accent)) var(--pos), var(--raised) var(--pos)); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: #f5f6f8; border: 0; box-shadow: 0 1px 3px #000a; }
+input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #f5f6f8; border: 0; box-shadow: 0 1px 3px #000a; }
+.slider.off input { --fill: var(--faint); }
+
+/* Link */
+.link form { display: flex; gap: 8px; }
+.link input { flex: 1; min-width: 0; height: 44px; padding: 0 12px; border-radius: 10px; background: var(--page); border: 1px solid var(--line); outline: none; }
+.send { height: 44px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: var(--ink); font-weight: 600; }
+.send:disabled { opacity: 0.5; }
+.says { font-size: 13.5px; color: var(--muted); }
+.says.pc { color: var(--accent); } .says.failed { color: var(--danger); }
+
+/* Signed out */
+.gate { min-height: 70dvh; display: grid; place-content: center; gap: 10px; text-align: center; padding: 0 12px; }
+.gate .logo { width: 48px; height: 48px; border-radius: 13px; margin: 0 auto 8px; }
+.gate .logo svg { width: 34px; height: 34px; }
+.gate h2 { font-size: 19px; }
+.gate p { color: var(--muted); max-width: 30ch; margin: 0 auto; }
+
+body.offline main, body.offline .stopbar { opacity: 0.5; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } .tile:active, .stop:active { transform: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2.68" y="6.24" width="1.36" height="3.52" rx=".68" fill="currentColor"/><rect x="5" y="4.32" width="1.36" height="7.36" rx=".68" fill="currentColor"/><rect x="7.32" y="2.88" width="1.36" height="10.24" rx=".68" fill="currentColor"/><rect x="9.64" y="4.8" width="1.36" height="6.4" rx=".68" fill="currentColor"/><rect x="11.96" y="6.56" width="1.36" height="2.88" rx=".68" fill="currentColor"/></svg></div>
+  <h1>Warble</h1>
+  <div class="pill muted" id="pill" role="status"><span>Connecting…</span></div>
+</header>
+
+<div id="gate" class="gate" hidden>
+  <div class="logo" aria-hidden="true"></div>
+  <h2 id="gate-title">Scan the code in Warble</h2>
+  <p id="gate-text">On your PC, open Warble, go to Setup, turn on Phone remote, and scan the code with your phone’s camera.</p>
+</div>
+
+<div id="app" hidden>
+  <nav class="tabs" role="tablist" aria-label="Section">
+    <button role="tab" id="tab-voice" aria-controls="voice">Voice</button>
+    <button role="tab" id="tab-sounds" aria-controls="sounds">Soundboard</button>
+  </nav>
+
+  <main id="sounds" role="tabpanel" aria-labelledby="tab-sounds">
+    <input class="search" id="search" type="search" placeholder="Find a sound" aria-label="Find a sound" autocomplete="off" hidden>
+    <div class="sounds" id="tiles"></div>
+    <div class="card empty" id="empty" hidden>
+      <h2>No sounds yet</h2>
+      <p class="small">Add some on your PC, on the Soundboard tab. Or send a link below.</p>
+    </div>
+    <section class="card">
+      <div class="slider" id="sound-volume"><label for="sound-volume-input">Volume</label><input id="sound-volume-input" type="range" min="0" max="1" step="0.01"><output></output></div>
+      <div class="row"><span class="grow small">Hear sounds in your headphones</span><button class="switch" role="switch" id="hear-sounds" aria-label="Hear sounds in your headphones"></button></div>
+    </section>
+    <section class="card link">
+      <div><h2>Send a link to your PC</h2><p class="small">A YouTube video or an X post. It opens in the trim editor on your PC.</p></div>
+      <form id="link-form" novalidate><input id="link" type="url" inputmode="url" placeholder="https://" aria-label="Link" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="send"><button class="send" id="send">Send</button></form>
+      <p class="says" id="says" role="status" hidden></p>
+    </section>
+  </main>
+
+  <main id="voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+    <button class="effect" id="effect" role="switch">
+      <span class="grow"><span class="title">Voice effect</span><span class="small" id="effect-says"></span></span>
+      <span class="switch" aria-hidden="true"></span>
+    </button>
+    <div class="presets" id="presets" role="radiogroup" aria-label="Voice"></div>
+    <section class="card">
+      <div class="slider" id="mic-gain"><label for="mic-gain-input">Mic gain</label><input id="mic-gain-input" type="range" min="0" max="1" step="0.01"><output></output></div>
+    </section>
+    <section class="card">
+      <div class="row"><div class="grow"><h2>Hear yourself</h2><p class="small">How you sound in the call</p></div><button class="switch" role="switch" id="monitor" aria-label="Hear yourself"></button></div>
+      <div class="slider" id="monitor-volume"><label for="monitor-volume-input">Volume</label><input id="monitor-volume-input" type="range" min="0" max="1" step="0.01"><output></output></div>
+    </section>
+  </main>
+
+  <div class="stopbar" id="stopbar">
+    <button class="stop" id="stop"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg>Stop all sounds</button>
+  </div>
+</div>
+<div class="toast" id="toast" role="alert" hidden></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const PLAY = '<path d="M5.5 3.75v8.5l7-4.25z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>';
+const PLAYING = '<path d="M3 6.5v3M6 3.5v9M9 5v6M12 7v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>';
+const svg = (body) => '<svg viewBox="0 0 16 16" aria-hidden="true">' + body + "</svg>";
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+
+// The key comes in the QR code's link (#k=…) and is kept for when the page opens without it.
+const fromLink = (location.hash.match(/k=([0-9a-f]{32})/) || [])[1];
+const key = fromLink || store.get("warble-key") || "";
+if (key) {
+  store.set("warble-key", key);
+  // Keep it in the address, so Add to Home Screen saves a link that works.
+  if (!fromLink) history.replaceState(null, "", "#k=" + key);
+}
+document.querySelector("#gate .logo").innerHTML = document.querySelector("header .logo").innerHTML;
+
+let state = null, sent = 0, shown = 0, failures = 0, signedOut = false;
+let soundsDrawn = "", presetsDrawn = false, toastTimer = 0;
+const dragging = new Set();
+
+function gate(title, text) {
+  $("app").hidden = true;
+  $("gate").hidden = false;
+  $("gate-title").textContent = title;
+  $("gate-text").textContent = text;
+}
+
+function signOut(expired) {
+  signedOut = true;
+  if (expired) {
+    gate("This code doesn’t work any more", "On your PC, open Warble, go to Setup, and scan the code under Phone remote again.");
+  } else {
+    $("app").hidden = true;
+    $("gate").hidden = false;
+  }
+  pill("Signed out", "muted");
+}
+
+function pill(label, tone) {
+  const p = $("pill");
+  p.className = "pill " + tone;
+  p.firstChild.textContent = label;
+}
+
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.hidden = true), 3500);
+}
+
+// Every answer carries the whole state. Answers to older requests than the one shown are dropped.
+async function call(method, path, body) {
+  if (signedOut) return null;
+  const n = ++sent;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 4000);
+  try {
+    const r = await fetch(path, {
+      method,
+      headers: body ? { "X-Warble-Key": key, "Content-Type": "application/json" } : { "X-Warble-Key": key },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+      signal: abort.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401) { signOut(true); return null; }
+    failures = 0;
+    document.body.classList.remove("offline");
+    if (!r.ok) { toast(data.error || "That didn’t work. Try again."); if (state) draw(state); return null; }
+    if (n >= shown) { shown = n; draw(data); }
+    return data;
+  } catch {
+    if (++failures >= 2) {
+      document.body.classList.add("offline");
+      pill("Can’t reach your PC", "danger");
+      if (!state) gate("Can’t reach Warble", "Make sure Warble is running on your PC, and that your phone is on the same Wi‑Fi.");
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const act = (what) => call("POST", "/api/do", what);
+
+function draw(s) {
+  const first = !state;
+  state = s;
+  if (first) showTab(store.get("warble-tab") || "sounds");
+  $("gate").hidden = true;
+  $("app").hidden = false;
+  pill(s.status.label, s.status.tone);
+  drawSounds(s);
+  drawVoice(s);
+  slider("sound-volume", s.sound_volume, pct(s.sound_volume), true);
+  toggle($("hear-sounds"), s.hear_sounds);
+  const says = $("says");
+  says.hidden = !s.link.says;
+  says.className = "says " + s.link.state;
+  says.textContent = s.link.says;
+  $("send").disabled = s.link.state === "busy";
+}
+
+function drawSounds(s) {
+  const list = s.sounds;
+  const shape = list.map((x) => x.id + ":" + x.name).join("\n");
+  if (shape !== soundsDrawn) {
+    soundsDrawn = shape;
+    const tiles = $("tiles");
+    tiles.replaceChildren(...list.map((x) => {
+      const b = document.createElement("button");
+      b.className = "tile";
+      b.dataset.id = x.id;
+      b.dataset.name = x.name.toLowerCase();
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = x.name;
+      b.append(name);
+      b.insertAdjacentHTML("beforeend", svg(PLAY));
+      b.onclick = () => {
+        mark(b, true);
+        if (navigator.vibrate) navigator.vibrate(8);
+        act({ do: "play", id: x.id });
+      };
+      return b;
+    }));
+    $("empty").hidden = list.length > 0;
+    $("search").hidden = list.length < 9;
+    filter();
+  }
+  const playing = new Set(list.filter((x) => x.playing).map((x) => String(x.id)));
+  for (const b of $("tiles").children) mark(b, playing.has(b.dataset.id));
+}
+
+function mark(tile, playing) {
+  if (tile.classList.contains("playing") === playing) return;
+  tile.classList.toggle("playing", playing);
+  tile.querySelector("svg").outerHTML = svg(playing ? PLAYING : PLAY);
+  tile.setAttribute("aria-label", tile.querySelector(".name").textContent + (playing ? ", playing" : ""));
+}
+
+function filter() {
+  const q = $("search").value.trim().toLowerCase();
+  for (const b of $("tiles").children) b.hidden = q !== "" && !b.dataset.name.includes(q);
+}
+
+function drawVoice(s) {
+  const presets = $("presets");
+  if (!presetsDrawn) {
+    presetsDrawn = true;
+    presets.replaceChildren(...s.presets.map((p) => {
+      const b = document.createElement("button");
+      b.className = "preset";
+      b.setAttribute("role", "radio");
+      b.dataset.id = p.id;
+      b.innerHTML = svg(p.icon);
+      b.append(p.name);
+      b.onclick = () => {
+        for (const o of presets.children) o.setAttribute("aria-checked", String(o === b));
+        act({ do: "preset", id: p.id });
+      };
+      return b;
+    }));
+  }
+  for (const b of presets.children) b.setAttribute("aria-checked", String(b.dataset.id === s.preset));
+  presets.classList.toggle("off", !s.effect);
+  const name = (s.presets.find((p) => p.id === s.preset) || {}).name || "";
+  $("effect").classList.toggle("on", s.effect);
+  $("effect").setAttribute("aria-checked", String(s.effect));
+  $("effect-says").textContent = s.effect ? name + " voice" : "Off: people hear your own voice";
+  slider("mic-gain", s.mic_gain, s.mic_gain_label, true);
+  toggle($("monitor"), s.monitor);
+  slider("monitor-volume", s.monitor_volume, pct(s.monitor_volume), s.monitor);
+}
+
+const pct = (v) => Math.round(v * 100) + "%";
+
+function slider(id, value, label, on) {
+  const row = $(id), input = row.querySelector("input");
+  row.classList.toggle("off", !on);
+  if (dragging.has(id)) return;
+  input.value = value;
+  input.style.setProperty("--pos", value * 100 + "%");
+  row.querySelector("output").textContent = label;
+}
+
+function toggle(el, on) { el.setAttribute("aria-checked", String(on)); }
+
+// Sliders send while they move (a few times a second) and once more where they stop.
+function wire(id, what, field, label) {
+  const row = $(id), input = row.querySelector("input");
+  let last = 0, timer = 0;
+  const send = () => { last = Date.now(); act({ do: what, [field]: Number(input.value) }); };
+  input.addEventListener("input", () => {
+    dragging.add(id);
+    input.style.setProperty("--pos", input.value * 100 + "%");
+    if (label) row.querySelector("output").textContent = label(Number(input.value));
+    clearTimeout(timer);
+    if (Date.now() - last > 120) send(); else timer = setTimeout(send, 120);
+  });
+  input.addEventListener("change", () => { clearTimeout(timer); send(); dragging.delete(id); });
+}
+wire("sound-volume", "sound_volume", "value", pct);
+wire("monitor-volume", "monitor_volume", "value", pct);
+wire("mic-gain", "mic_gain", "pos", null);
+
+function flip(el, what) {
+  el.onclick = () => {
+    const on = el.getAttribute("aria-checked") !== "true";
+    toggle(el, on);
+    act({ do: what, on });
+  };
+}
+flip($("hear-sounds"), "hear_sounds");
+flip($("monitor"), "monitor");
+$("effect").onclick = () => {
+  const on = !state.effect;
+  state.effect = on;
+  drawVoice(state);
+  act({ do: "effect", on });
+};
+$("stop").onclick = () => {
+  for (const b of $("tiles").children) mark(b, false);
+  act({ do: "stop" });
+};
+$("search").addEventListener("input", filter);
+$("link-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = $("link").value.trim();
+  if (!url) return;
+  $("link").blur();
+  if (await act({ do: "link", url })) $("link").value = "";
+});
+
+function showTab(which) {
+  const sounds = which !== "voice";
+  $("sounds").hidden = !sounds;
+  $("voice").hidden = sounds;
+  $("stopbar").hidden = !sounds;
+  document.body.classList.toggle("voice-tab", !sounds);
+  $("tab-sounds").setAttribute("aria-selected", String(sounds));
+  $("tab-voice").setAttribute("aria-selected", String(!sounds));
+  store.set("warble-tab", sounds ? "sounds" : "voice");
+}
+$("tab-sounds").onclick = () => showTab("sounds");
+$("tab-voice").onclick = () => showTab("voice");
+
+// Checks for changes once a second while the page is on screen.
+let poller = 0;
+function poll() {
+  clearInterval(poller);
+  if (document.visibilityState !== "visible" || signedOut) return;
+  call("GET", "/api/state");
+  poller = setInterval(() => call("GET", "/api/state"), 1000);
+}
+document.addEventListener("visibilitychange", poll);
+if (key) poll(); else signOut(false);
+</script>
+</body>
+</html>

@@ -10,6 +10,7 @@ use rune::{AppHandle, FileDialogOptions, Live, Tx};
 use warble_engine::{Devices, Engine, Preset, SoundId, Status};
 
 use crate::find::Find;
+use crate::remote::Remote;
 use crate::settings::{self, AUDIO_EXTS, Settings};
 use crate::trim::Trim;
 
@@ -127,6 +128,7 @@ pub struct State {
     /// The Find sounds page, and the trim editor while it's open (both on the Soundboard tab).
     pub find: Find,
     pub trim: Option<Trim>,
+    pub remote: Remote,
     tray_shows: Option<(bool, Preset)>,
     save_due: Option<Instant>,
     last_poll: f64,
@@ -178,6 +180,7 @@ impl State {
             sim_no_cable: false,
             dialog_open: false,
             trim: None,
+            remote: Remote::default(),
             tray_shows: None,
             save_due: None,
             last_poll: f64::NEG_INFINITY,
@@ -294,8 +297,11 @@ impl State {
             self.stop_preview();
         }
         if tab == Tab::Setup {
-            // Headsets come and go; show what's plugged in now.
+            // Headsets and networks come and go; show what's here now.
             self.devices = self.engine.devices();
+            if self.settings.remote {
+                self.remote.find_addresses();
+            }
         }
     }
 

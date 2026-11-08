@@ -16,6 +16,8 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
   video file (MP4, MOV, M4V) or an M4A on the window.
 - **Hear yourself:** listen to your changed voice in your headphones.
 - **Hear sounds:** soundboard clips play in your headphones too (on by default; switch it off on the *Soundboard* tab).
+- **Phone remote:** play sounds, change your voice and set the volumes from your phone's browser.
+  Turn it on under *Setup → Phone remote* and scan the QR code. See [Phone remote](#phone-remote).
 - **Hotkeys** that work while a game has focus, and a tray icon so it keeps running when the window is closed.
 
 ## Set it up (once per PC)
@@ -47,6 +49,19 @@ Warble picks up your normal mic and VB-CABLE by itself. You can change either on
 
 If another app already uses one of these keys, the *Setup* tab says so.
 
+## Phone remote
+
+Turn on *Setup → Phone remote*, then scan the QR code with your phone's camera. Your phone needs to be on
+the same Wi-Fi as the PC (or have Tailscale on; switch the code to *Tailscale* when it shows). The page
+works in any phone browser. *Add to Home Screen* keeps it one tap away.
+
+- **Windows asks once** whether Warble may use the network: choose *Allow*. If the phone can't connect,
+  check that the PC's Wi-Fi is set to *Private* in Windows settings.
+- **The code holds a secret.** Only phones that scanned it can use the remote. *New code* signs every phone out.
+- **Sending a link** from the phone opens it on the PC, in the trim editor, where you cut and save it.
+- Warble listens on port 47823 (or a free port, when another app has that one), over plain HTTP on your
+  own network.
+
 ## Where things live
 
 - Settings: `%APPDATA%\Warble\settings.json`
@@ -68,7 +83,11 @@ WARBLE_MOCK=1 cargo run -p warble -- --snap snaps/voice.png --scene voice   # he
 ```
 
 Scenes: `voice`, `voice-off`, `soundboard`, `soundboard-empty`, `setup`, `no-cable`, `hotkeys-failed`, `drop`, `load-error`,
-`find-start`, `find`, `find-offline`, `youtube-install`, `trim`.
+`find-start`, `find`, `find-offline`, `youtube-install`, `trim`, `remote`, `remote-tailscale`, `remote-no-network`.
+The Setup tab is taller than the window; add `--size 400x1150` to see all of the remote's card.
+
+To try the phone page on the mock engine: `cargo test -p warble serve_a_mock_board -- --ignored --nocapture`,
+then open the link it prints.
 
 To check that the code compiles for Windows from Linux (check only; release builds happen on Windows):
 
