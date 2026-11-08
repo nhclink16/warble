@@ -11,7 +11,6 @@
 <meta name="apple-mobile-web-app-title" content="Warble">
 <link rel="apple-touch-icon" href="/icon.png">
 <link rel="icon" href="/icon.png">
-<link rel="manifest" href="/manifest.webmanifest">
 <title>Warble</title>
 <style>
 :root {
@@ -25,8 +24,8 @@
   --accent: #51daa7;
   --ink: #0f1a1b;
   --chosen: #213230;
-  --warn: oklch(0.83 0.13 80);
-  --danger: oklch(0.70 0.16 25);
+  --warn: #f3bd5c;
+  --danger: #f2716a;
   --gap: 12px;
   --pad: 16px;
   font: 15px/1.4 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -37,6 +36,7 @@
 }
 * { box-sizing: border-box; margin: 0; }
 body {
+  min-height: 100vh;
   min-height: 100dvh;
   padding: calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + var(--pad))
     calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + var(--pad));
@@ -53,10 +53,10 @@ header { display: flex; align-items: center; gap: 10px; height: 36px; }
 .logo svg { width: 20px; height: 20px; }
 h1 { font-size: 17px; font-weight: 650; flex: 1; letter-spacing: -0.005em; }
 .pill { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 14px; font-size: 13.5px; font-weight: 500; max-width: 60%;
-  --tone: var(--accent); color: var(--tone); border: 1px solid color-mix(in oklab, var(--tone) 30%, transparent); background: color-mix(in oklab, var(--tone) 12%, var(--page)); }
+  --tone: var(--accent); --rgb: 81 218 167; color: var(--tone); border: 1px solid rgb(var(--rgb) / 0.3); background: rgb(var(--rgb) / 0.12); }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
 .pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pill.warn { --tone: var(--warn); } .pill.danger { --tone: var(--danger); } .pill.muted { --tone: var(--muted); }
+.pill.warn { --tone: var(--warn); --rgb: 243 189 92; } .pill.danger { --tone: var(--danger); --rgb: 242 113 106; } .pill.muted { --tone: var(--muted); --rgb: 166 169 175; }
 
 .tabs { display: grid; grid-template-columns: 1fr 1fr; margin: 14px 0 var(--pad); padding: 3px; gap: 3px; border-radius: 10px; background: var(--layer); border: 1px solid var(--line); }
 .tabs button { height: 36px; border-radius: 7px; color: var(--muted); font-weight: 500; }
@@ -81,11 +81,13 @@ h2, .title { display: block; font-size: 15px; font-weight: 600; }
 .tile.playing svg { color: var(--accent); right: 10px; bottom: 9px; }
 .search { width: 100%; height: 42px; padding: 0 14px; border-radius: 10px; background: var(--layer); border: 1px solid var(--line); outline: none; }
 .search::placeholder, .link input::placeholder { color: var(--faint); }
-.search:focus, .link input:focus { border-color: color-mix(in oklab, var(--accent) 60%, var(--line)); }
+.search:focus, .link input:focus { border-color: #3a9d7a; }
+/* 16px at least, or iPhones zoom in on the field and stay zoomed. */
+.search, .link input { font-size: 16px; }
 .empty { padding: 28px 18px; text-align: center; display: grid; gap: 6px; justify-items: center; }
 
 .stopbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px calc(env(safe-area-inset-right) + var(--pad)) calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + var(--pad));
-  background: color-mix(in oklab, var(--page) 88%, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
+  background: rgb(12 14 19 / 0.88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); border-top: 1px solid var(--line); }
 .stop { width: 100%; height: 54px; border-radius: 12px; background: var(--text); color: var(--page); font-weight: 600; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .stop svg { width: 16px; height: 16px; }
 .stop:active { transform: scale(0.985); }
@@ -130,7 +132,7 @@ input[type=range]::-moz-range-thumb { width: 22px; height: 22px; border-radius: 
 .says.pc { color: var(--accent); } .says.failed { color: var(--danger); }
 
 /* Signed out */
-.gate { min-height: 70dvh; display: grid; place-content: center; gap: 10px; text-align: center; padding: 0 12px; }
+.gate { min-height: 70vh; display: grid; place-content: center; gap: 10px; text-align: center; padding: 0 12px; }
 .gate .logo { width: 48px; height: 48px; border-radius: 13px; margin: 0 auto 8px; }
 .gate .logo svg { width: 34px; height: 34px; }
 .gate h2 { font-size: 19px; }
@@ -211,17 +213,21 @@ const store = {
 
 // The key comes in the QR code's link (#k=…) and is kept for when the page opens without it.
 const fromLink = (location.hash.match(/k=([0-9a-f]{32})/) || [])[1];
-const key = fromLink || store.get("warble-key") || "";
-if (key) {
-  store.set("warble-key", key);
-  // Keep it in the address, so Add to Home Screen saves a link that works.
-  if (!fromLink) history.replaceState(null, "", "#k=" + key);
-}
+const stored = store.get("warble-key");
+let key = fromLink || stored || "";
+// Keep it in the address, so Add to Home Screen saves a link that works.
+const keep = () => { if (location.hash !== "#k=" + key) history.replaceState(null, "", "#k=" + key); };
+if (key) keep();
+// A new link pasted into this tab only changes the part after #, which doesn't reload.
+addEventListener("hashchange", () => location.reload());
 document.querySelector("#gate .logo").innerHTML = document.querySelector("header .logo").innerHTML;
 
 let state = null, sent = 0, shown = 0, failures = 0, signedOut = false;
 let soundsDrawn = "", presetsDrawn = false, toastTimer = 0;
-const dragging = new Set();
+// When each slider last moved here, and what each tile last did here (to ride out a poll
+// that left before the PC caught up).
+const moved = {}, tapped = {};
+const LOCAL_MS = 700;
 
 function gate(title, text) {
   $("app").hidden = true;
@@ -270,7 +276,13 @@ async function call(method, path, body) {
       signal: abort.signal,
     });
     const data = await r.json().catch(() => ({}));
-    if (r.status === 401) { signOut(true); return null; }
+    if (r.status === 401) {
+      // An old link: the code this phone last used may still work.
+      if (stored && key !== stored) { key = stored; keep(); return call(method, path, body); }
+      signOut(true);
+      return null;
+    }
+    if (r.ok) store.set("warble-key", key);
     failures = 0;
     document.body.classList.remove("offline");
     if (!r.ok) { toast(data.error || "That didn’t work. Try again."); if (state) draw(state); return null; }
@@ -324,6 +336,7 @@ function drawSounds(s) {
       b.append(name);
       b.insertAdjacentHTML("beforeend", svg(PLAY));
       b.onclick = () => {
+        tapped[x.id] = { playing: true, at: Date.now() };
         mark(b, true);
         if (navigator.vibrate) navigator.vibrate(8);
         act({ do: "play", id: x.id });
@@ -332,10 +345,15 @@ function drawSounds(s) {
     }));
     $("empty").hidden = list.length > 0;
     $("search").hidden = list.length < 9;
+    if ($("search").hidden) $("search").value = "";
     filter();
   }
   const playing = new Set(list.filter((x) => x.playing).map((x) => String(x.id)));
-  for (const b of $("tiles").children) mark(b, playing.has(b.dataset.id));
+  const now = Date.now();
+  for (const b of $("tiles").children) {
+    const mine = tapped[b.dataset.id];
+    mark(b, mine && now - mine.at < LOCAL_MS ? mine.playing : playing.has(b.dataset.id));
+  }
 }
 
 function mark(tile, playing) {
@@ -380,14 +398,17 @@ function drawVoice(s) {
 }
 
 const pct = (v) => Math.round(v * 100) + "%";
+// The mic gain slider runs 25%..400% with 100% in the middle, snapping there (as ui::pos_gain).
+const gain = (pos) => { const g = Math.pow(4, pos * 2 - 1); return Math.abs(g - 1) < 0.04 ? 1 : g; };
 
 function slider(id, value, label, on) {
   const row = $(id), input = row.querySelector("input");
   row.classList.toggle("off", !on);
-  if (dragging.has(id)) return;
+  if (Date.now() - (moved[id] || 0) < 1500) return;
   input.value = value;
   input.style.setProperty("--pos", value * 100 + "%");
   row.querySelector("output").textContent = label;
+  input.setAttribute("aria-valuetext", label);
 }
 
 function toggle(el, on) { el.setAttribute("aria-checked", String(on)); }
@@ -398,17 +419,19 @@ function wire(id, what, field, label) {
   let last = 0, timer = 0;
   const send = () => { last = Date.now(); act({ do: what, [field]: Number(input.value) }); };
   input.addEventListener("input", () => {
-    dragging.add(id);
+    moved[id] = Date.now();
     input.style.setProperty("--pos", input.value * 100 + "%");
-    if (label) row.querySelector("output").textContent = label(Number(input.value));
+    const says = label(Number(input.value));
+    row.querySelector("output").textContent = says;
+    input.setAttribute("aria-valuetext", says);
     clearTimeout(timer);
     if (Date.now() - last > 120) send(); else timer = setTimeout(send, 120);
   });
-  input.addEventListener("change", () => { clearTimeout(timer); send(); dragging.delete(id); });
+  input.addEventListener("change", () => { clearTimeout(timer); moved[id] = Date.now(); send(); });
 }
 wire("sound-volume", "sound_volume", "value", pct);
 wire("monitor-volume", "monitor_volume", "value", pct);
-wire("mic-gain", "mic_gain", "pos", null);
+wire("mic-gain", "mic_gain", "pos", (v) => pct(gain(v)));
 
 function flip(el, what) {
   el.onclick = () => {
@@ -426,7 +449,10 @@ $("effect").onclick = () => {
   act({ do: "effect", on });
 };
 $("stop").onclick = () => {
-  for (const b of $("tiles").children) mark(b, false);
+  for (const b of $("tiles").children) {
+    tapped[b.dataset.id] = { playing: false, at: Date.now() };
+    mark(b, false);
+  }
   act({ do: "stop" });
 };
 $("search").addEventListener("input", filter);

@@ -56,11 +56,15 @@ the same Wi-Fi as the PC (or have Tailscale on; switch the code to *Tailscale* w
 works in any phone browser. *Add to Home Screen* keeps it one tap away.
 
 - **Windows asks once** whether Warble may use the network: choose *Allow*. If the phone can't connect,
-  check that the PC's Wi-Fi is set to *Private* in Windows settings.
+  check that the PC's Wi-Fi is set to *Private* in Windows settings, and that Warble is allowed in
+  *Windows Security → Firewall & network protection → Allow an app through firewall*.
 - **The code holds a secret.** Only phones that scanned it can use the remote. *New code* signs every phone out.
 - **Sending a link** from the phone opens it on the PC, in the trim editor, where you cut and save it.
 - Warble listens on port 47823 (or a free port, when another app has that one), over plain HTTP on your
-  own network.
+  own network. Use it on your home Wi-Fi or over Tailscale, not on shared or public Wi-Fi, where another
+  device could read the code off the network.
+- **A VPN on the PC** that sends all traffic through it can put its own address in the QR code, which the
+  phone can't reach. Turn the VPN off, or use Tailscale.
 
 ## Where things live
 

@@ -65,7 +65,7 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             .wrap()
     };
     let mut c = c;
-    if r.tailscale.is_some() {
+    if r.wifi.is_some() && r.tailscale.is_some() {
         c = c.child(
             SegmentedControl::new(&["Wi‑Fi", "Tailscale"], Some(usize::from(r.use_tailscale)))
                 .label("Connect over")
@@ -97,10 +97,14 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
             ),
     )
     .child(
-        text("If Windows asks whether Warble can use the network, choose Allow.")
-            .font(SMALL)
-            .color(k.c.text_muted)
-            .wrap(),
+        text(
+            "If Windows asks whether Warble can use the network, choose Allow. If your phone \
+             still can’t open it, allow Warble in Windows Security > Firewall & network \
+             protection > Allow an app through firewall.",
+        )
+        .font(SMALL)
+        .color(k.c.text_muted)
+        .wrap(),
     )
     .child(
         row()
@@ -189,8 +193,7 @@ pub mod scenes {
         s.set_tab(Tab::Setup);
         s.set_remote(true);
         s.settings.remote_key = "4f9c2a7e1b3d58c6a0e2f7419d8b3c65".into();
-        s.remote.wifi = wifi;
-        s.remote.tailscale = tailscale;
+        s.remote.set_addresses(wifi, tailscale);
     }
 
     pub fn on(s: &mut State) {

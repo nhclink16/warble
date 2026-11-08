@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rune::{AppHandle, TextEdit};
 use serde::Deserialize;
@@ -55,10 +55,18 @@ impl Remote {
     /// Reads this PC's addresses again: networks come and go.
     pub fn find_addresses(&mut self) {
         // Connecting a UDP socket only picks the route; nothing is sent.
-        self.wifi = local_ip("8.8.8.8:53").filter(|ip| !is_tailscale(ip));
-        self.tailscale = local_ip("100.100.100.100:53").filter(is_tailscale);
-        if self.tailscale.is_none() {
+        let wifi = local_ip("8.8.8.8:53").filter(|ip| !is_tailscale(ip));
+        let tailscale = local_ip("100.100.100.100:53").filter(is_tailscale);
+        self.set_addresses(wifi, tailscale);
+    }
+
+    pub fn set_addresses(&mut self, wifi: Option<Ipv4Addr>, tailscale: Option<Ipv4Addr>) {
+        (self.wifi, self.tailscale) = (wifi, tailscale);
+        if tailscale.is_none() {
             self.use_tailscale = false;
+        } else if wifi.is_none() {
+            // A Tailscale exit node carries all traffic, so Tailscale is the only way in.
+            self.use_tailscale = true;
         }
     }
 }
@@ -67,9 +75,6 @@ impl State {
     /// The Setup tab's switch.
     pub fn set_remote(&mut self, on: bool) {
         self.settings.remote = on;
-        if on && self.settings.remote_key.is_empty() {
-            self.forget_phones();
-        }
         self.sync_remote();
         self.changed();
     }
@@ -88,10 +93,15 @@ impl State {
     /// Starts or stops the server to match the setting. The server runs only while the app
     /// does; tests and snapshots get the card without one.
     pub fn sync_remote(&mut self) {
+        if self.settings.remote && self.settings.remote_key.is_empty() {
+            self.forget_phones();
+        }
         let r = &mut self.remote;
         if !self.settings.remote || self.settings.remote_key.is_empty() {
             r.server = None;
-            r.problem = None;
+            r.problem = self.settings.remote.then(|| {
+                "Couldn’t make a code for your phone. Turn the remote off and on again.".into()
+            });
             return;
         }
         r.find_addresses();
@@ -117,7 +127,11 @@ impl State {
     /// One phone request: its HTTP status, the JSON to send back, and whether the window
     /// shows something new.
     pub fn api(&mut self, method: &str, path: &str, key: &str, body: &[u8]) -> (u16, String, bool) {
-        if !self.settings.remote || !same_key(key, &self.settings.remote_key) {
+        if !self.settings.remote {
+            // Not 401: the phone's code still works once the remote is back on.
+            return (503, error("The phone remote is off on your PC."), false);
+        }
+        if !same_key(key, &self.settings.remote_key) {
             return (401, error("Scan the code in Warble again."), false);
         }
         match (method, path) {
@@ -163,7 +177,8 @@ impl State {
         Ok(())
     }
 
-    /// Opens the Find sounds page on the PC and gets the link's audio, ready to trim there.
+    /// Opens the Find sounds page on the PC and gets the link's audio, ready to trim there. The
+    /// window isn't brought up: on Windows that would take focus from a game.
     fn link_from_phone(&mut self, url: &str) -> Result<(), String> {
         if !youtube::looks_like_link(url) {
             return Err("Paste a link that starts with https://".into());
@@ -177,10 +192,6 @@ impl State {
         self.open_find();
         self.find.link = TextEdit::new(url);
         self.get_audio();
-        // Shown without taking focus, so a game in front keeps it.
-        if let Some(h) = &self.handle {
-            h.show();
-        }
         Ok(())
     }
 
@@ -200,12 +211,13 @@ impl State {
             YouTube::Installing => ("busy", "Downloading yt-dlp on your PC…"),
             YouTube::AskToInstall => (
                 "pc",
-                "Warble needs to download a free tool first. Say yes on your PC.",
+                "Open Warble on your PC: it needs to download a free tool first.",
             ),
             YouTube::Failed(e) => ("failed", e.as_str()),
-            YouTube::Idle if self.trim.is_some() => {
-                ("pc", "It’s open on your PC. Trim it and save it there.")
-            }
+            YouTube::Idle if self.trim.is_some() => (
+                "pc",
+                "Ready on your PC. Open Warble there to trim and save it.",
+            ),
             YouTube::Idle => ("idle", ""),
         };
         // The same words and colour as the window's status pill.
@@ -351,11 +363,17 @@ pub struct Request {
 /// Answers an API request with its HTTP status and JSON.
 pub type Answer = Arc<dyn Fn(Request) -> (u16, String) + Send + Sync>;
 
-/// Hands each request to the UI thread, where the state lives, and waits for its answer.
+/// Hands each request to the UI thread, where the state lives, and waits for its answer. A
+/// request the phone was told failed (the UI thread was busy for 3 s) never runs late.
 fn on_ui_thread(handle: AppHandle<State>) -> Answer {
     Arc::new(move |req: Request| {
         let (tx, rx) = mpsc::sync_channel(1);
+        let taken = Arc::new(AtomicBool::new(false));
+        let ours = taken.clone();
         handle.update_if(move |s, t| {
+            if ours.swap(true, Ordering::AcqRel) {
+                return false;
+            }
             let (status, body, changed) = s.api(&req.method, &req.path, &req.key, &req.body);
             let _ = tx.send((status, body));
             if changed {
@@ -364,8 +382,13 @@ fn on_ui_thread(handle: AppHandle<State>) -> Answer {
             }
             changed
         });
-        rx.recv_timeout(Duration::from_secs(3))
-            .unwrap_or_else(|_| (503, error("Warble is busy. Try again.")))
+        let busy = || (503, error("Warble is busy. Try again."));
+        match rx.recv_timeout(Duration::from_secs(3)) {
+            Ok(answer) => answer,
+            // It started meanwhile: wait for what it did rather than say it failed.
+            Err(_) if taken.swap(true, Ordering::AcqRel) => rx.recv().unwrap_or_else(|_| busy()),
+            Err(_) => busy(),
+        }
     })
 }
 
@@ -403,23 +426,35 @@ pub fn listen(addr: SocketAddr, answer: Answer) -> std::io::Result<Server> {
                     std::thread::sleep(Duration::from_millis(50));
                     continue;
                 };
-                if open.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
-                    open.fetch_sub(1, Ordering::AcqRel);
+                let slot = Slot::take(&open);
+                if open.load(Ordering::Acquire) > MAX_CONNECTIONS {
                     continue;
                 }
-                let job = {
-                    let (open, answer) = (open.clone(), answer.clone());
-                    move || {
-                        serve(stream, &answer);
-                        open.fetch_sub(1, Ordering::AcqRel);
-                    }
-                };
-                if std::thread::Builder::new().spawn(job).is_err() {
-                    open.fetch_sub(1, Ordering::AcqRel);
-                }
+                let answer = answer.clone();
+                // A failed spawn drops the job, and the slot with it.
+                let _ = std::thread::Builder::new().spawn(move || {
+                    let _slot = slot;
+                    serve(stream, &answer);
+                });
             }
         })?;
     Ok(Server { port, stop })
+}
+
+/// One open connection, counted while it lives (also if its thread panics).
+struct Slot(Arc<AtomicUsize>);
+
+impl Slot {
+    fn take(open: &Arc<AtomicUsize>) -> Slot {
+        open.fetch_add(1, Ordering::AcqRel);
+        Slot(open.clone())
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 fn serve(mut stream: TcpStream, answer: &Answer) {
@@ -437,11 +472,7 @@ fn route(req: Request, answer: &Answer) -> Reply {
     let path = req.path.split(['?', '#']).next().unwrap_or_default();
     match (req.method.as_str(), path) {
         ("GET", "/") => Reply::new(200, "text/html; charset=utf-8", PAGE.into()),
-        ("GET", "/manifest.webmanifest") => {
-            Reply::new(200, "application/manifest+json", MANIFEST.into())
-        }
-        ("GET", "/icon.png") => Reply::new(200, "image/png", icon_png(180).to_vec()),
-        ("GET", "/icon-512.png") => Reply::new(200, "image/png", icon_png(512).to_vec()),
+        ("GET", "/icon.png") => Reply::new(200, "image/png", icon_png().to_vec()),
         (_, p) if p.starts_with("/api/") => {
             let (status, json) = answer(req);
             Reply::new(status, "application/json", json.into_bytes())
@@ -450,16 +481,23 @@ fn route(req: Request, answer: &Answer) -> Reply {
     }
 }
 
-/// Reads one request: its head (up to `MAX_REQUEST`) and its body. An error is the status to
+/// Reads one request: its head and body, `MAX_REQUEST` bytes at most, within `TIMEOUT` all
+/// told, so a sender can't hold a connection by trickling bytes. An error is the status to
 /// answer with.
 fn read_request(stream: &mut impl Read) -> Result<Request, u16> {
+    let deadline = Instant::now() + TIMEOUT;
+    let mut read = |chunk: &mut [u8]| -> Result<usize, u16> {
+        match stream.read(chunk) {
+            _ if Instant::now() > deadline => Err(408),
+            Ok(0) => Err(400),
+            Ok(n) => Ok(n),
+            Err(_) => Err(408),
+        }
+    };
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];
     let (head, len, mut req) = loop {
-        let n = stream.read(&mut chunk).map_err(|_| 408u16)?;
-        if n == 0 {
-            return Err(400);
-        }
+        let n = read(&mut chunk)?;
         buf.extend_from_slice(&chunk[..n]);
         let mut headers = [httparse::EMPTY_HEADER; 32];
         let mut parsed = httparse::Request::new(&mut headers);
@@ -489,15 +527,13 @@ fn read_request(stream: &mut impl Read) -> Result<Request, u16> {
             _ => return Err(400),
         }
     };
-    if head + len > MAX_REQUEST {
+    // Not `head + len`: a huge Content-Length would wrap round.
+    if len > MAX_REQUEST - head {
         return Err(413);
     }
     let mut body = buf.split_off(head);
     while body.len() < len {
-        let n = stream.read(&mut chunk).map_err(|_| 408u16)?;
-        if n == 0 {
-            return Err(400);
-        }
+        let n = read(&mut chunk)?;
         body.extend_from_slice(&chunk[..n]);
     }
     body.truncate(len);
@@ -544,21 +580,19 @@ impl Reply {
     }
 }
 
-const MANIFEST: &str = r##"{"name":"Warble remote","short_name":"Warble","start_url":"/","display":"standalone","background_color":"#0c0e13","theme_color":"#0c0e13","icons":[{"src":"/icon.png","sizes":"180x180","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}"##;
-
-/// Warble's icon as a PNG, drawn once per size.
-fn icon_png(size: u32) -> &'static [u8] {
-    static SMALL: OnceLock<Vec<u8>> = OnceLock::new();
-    static LARGE: OnceLock<Vec<u8>> = OnceLock::new();
-    let cell = if size <= 180 { &SMALL } else { &LARGE };
-    cell.get_or_init(|| {
+/// Warble's icon as a PNG, for the phone's home screen (no web manifest: its start address
+/// would drop the key from the link). Drawn once.
+fn icon_png() -> &'static [u8] {
+    const SIZE: u32 = 180;
+    static PNG: OnceLock<Vec<u8>> = OnceLock::new();
+    PNG.get_or_init(|| {
         let mut out = Vec::new();
-        let mut png = png::Encoder::new(&mut out, size, size);
+        let mut png = png::Encoder::new(&mut out, SIZE, SIZE);
         png.set_color(png::ColorType::Rgba);
         png.set_depth(png::BitDepth::Eight);
         let written = png
             .write_header()
-            .and_then(|mut w| w.write_image_data(&crate::icon::rgba(size)));
+            .and_then(|mut w| w.write_image_data(&crate::icon::rgba(SIZE)));
         if written.is_err() {
             out.clear();
         }
@@ -616,11 +650,8 @@ mod tests {
         );
         s.set_remote(false);
         let key = s.settings.remote_key.clone();
-        assert_eq!(
-            s.api("GET", "/api/state", &key, b"").0,
-            401,
-            "off means off"
-        );
+        // Off isn't a wrong code: the phone keeps its key for when it's back on.
+        assert_eq!(s.api("GET", "/api/state", &key, b"").0, 503);
         assert!(!same_key("", ""), "no key never matches");
     }
 
@@ -737,6 +768,15 @@ mod tests {
             MAX_REQUEST
         );
         assert_eq!(request(big.as_bytes()).err(), Some(413));
+        let wraps = format!(
+            "POST /api/do HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            usize::MAX
+        );
+        assert_eq!(
+            request(wraps.as_bytes()).err(),
+            Some(413),
+            "a length that would wrap round is still too long"
+        );
         let endless = [b"GET / HTTP/1.1\r\nX: ".as_slice(), &[b'a'; MAX_REQUEST]].concat();
         assert_eq!(request(&endless).err(), Some(400));
     }
@@ -746,18 +786,38 @@ mod tests {
         assert!(is_tailscale(&Ipv4Addr::new(100, 101, 2, 3)));
         assert!(!is_tailscale(&Ipv4Addr::new(100, 128, 0, 1)));
         assert!(!is_tailscale(&Ipv4Addr::new(192, 168, 1, 20)));
-        let r = Remote {
+        let (wifi, tailscale) = (
+            Ipv4Addr::new(192, 168, 1, 20),
+            Ipv4Addr::new(100, 101, 2, 3),
+        );
+        let mut r = Remote {
             port: PORT,
-            wifi: Some(Ipv4Addr::new(192, 168, 1, 20)),
-            tailscale: Some(Ipv4Addr::new(100, 101, 2, 3)),
             ..Default::default()
         };
+        r.set_addresses(Some(wifi), Some(tailscale));
         assert_eq!(r.address().unwrap(), "http://192.168.1.20:47823");
-        let r = Remote {
-            use_tailscale: true,
-            ..r
-        };
+        r.use_tailscale = true;
         assert_eq!(r.address().unwrap(), "http://100.101.2.3:47823");
+        r.set_addresses(Some(wifi), None);
+        assert_eq!(
+            r.address().unwrap(),
+            "http://192.168.1.20:47823",
+            "Tailscale went off"
+        );
+        // A Tailscale exit node takes the route to the internet: Tailscale is the only way.
+        r.set_addresses(None, Some(tailscale));
+        assert_eq!(r.address().unwrap(), "http://100.101.2.3:47823");
+        r.set_addresses(None, None);
+        assert_eq!(r.address(), None);
+    }
+
+    #[test]
+    fn a_saved_remote_without_a_key_gets_one() {
+        let mut s = State::mock();
+        s.settings.remote = true;
+        s.sync_remote();
+        assert_eq!(s.settings.remote_key.len(), 32);
+        assert_eq!(s.remote.problem, None);
     }
 
     /// The real server, answered by a mock app on its own thread as the UI thread would.
