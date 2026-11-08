@@ -110,8 +110,11 @@ fn heading(k: &Kit, title: &str, detail: &str) -> El {
 
 fn open_url(url: &'static str) -> impl Fn(&mut State, &mut Tx) {
     move |s: &mut State, tx: &mut Tx| {
-        if let Err(e) = tx.open_url(url) {
-            s.notice = Some(format!("Couldn’t open the browser: {e}"));
+        if tx.open_url(url).is_err() {
+            let address = url.trim_start_matches("https://").trim_end_matches('/');
+            s.notice = Some(format!(
+                "Couldn’t open your browser. Open it and go to {address}."
+            ));
         }
     }
 }
@@ -191,15 +194,15 @@ fn search_box(s: &State, k: &Kit) -> El {
                 .key("search-button"),
             ),
     );
-    if s.settings.freesound_key.is_empty() {
-        c = c.child(
-            text("Searching Myinstants only.")
-                .font(SMALL)
-                .color(k.c.text_faint)
-                .wrap(),
-        );
-    }
+    // Shown while the page offers a key, as it opened: a key typed in changes the words, so
+    // the field doesn't jump.
     if f.key_first {
+        let searching = if s.settings.freesound_key.is_empty() {
+            "Searching Myinstants only."
+        } else {
+            "Searching Myinstants and Freesound."
+        };
+        c = c.child(text(searching).font(SMALL).color(k.c.text_faint).wrap());
         c = c.child(
             disclosure(
                 k,
@@ -302,6 +305,12 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
                 .build(k),
         )
         .key(format!("add-{i}"))
+        // It gives way to "Added": focus goes on to the next result, or the link field.
+        .focus_return(if i + 1 < f.hits.len() {
+            format!("hit-{}", i + 1)
+        } else {
+            "link-field".into()
+        })
     });
     row()
         .key(format!("hit-{i}"))
@@ -418,6 +427,8 @@ fn install_notice(k: &Kit) -> El {
     );
     col()
         .key("install-notice")
+        // "Not now" closes it: focus goes back to the link.
+        .focus_return("link-field")
         .w_full()
         .gap(10.0)
         .child(

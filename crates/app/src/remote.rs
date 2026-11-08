@@ -90,7 +90,7 @@ impl State {
                 self.settings.remote_key = key;
                 self.changed();
             }
-            Err(e) => self.notice = Some(format!("Couldn’t make a new code: {e}. Try again.")),
+            Err(_) => self.notice = Some("Couldn’t make a new code. Try again.".into()),
         }
     }
 

@@ -917,3 +917,54 @@ fn home_and_end_go_to_the_ends_of_faders_and_trim_handles() {
     press(&mut rt, Key::End);
     assert!(near(at(&rt).1, 4.0), "{:?}", at(&rt));
 }
+
+#[test]
+fn the_freesound_hint_changes_its_words_not_the_layout() {
+    let mut rt = app();
+    rt.update(|s, _| {
+        s.open_find();
+        s.find.key_open = true;
+    });
+    settle(&mut rt);
+    let says = |rt: &Runtime<State>, words: &str| {
+        rt.elements()
+            .into_iter()
+            .any(|e| e.text.as_deref() == Some(words))
+    };
+    assert!(says(&rt, "Searching Myinstants only."));
+    let field = rt.find("key-field").expect("the key field");
+    // A key pasted in, as on_change saves it.
+    rt.update(|s, _| {
+        s.find.key = rune::TextEdit::new("4f9c2a7e");
+        s.set_freesound_key();
+    });
+    settle(&mut rt);
+    assert!(says(&rt, "Searching Myinstants and Freesound."));
+    assert_eq!(rt.find("key-field"), Some(field), "the field stays put");
+}
+
+#[test]
+fn not_now_and_add_hand_focus_on() {
+    let mut rt = app();
+    scene(&mut rt, "youtube-install");
+    tab_to(&mut rt, "not-now");
+    press(&mut rt, Key::Text(" ".into()));
+    assert_eq!(rt.state.find.youtube, YouTube::Idle);
+    assert!(
+        focus_path(&rt).contains("/link-field"),
+        "{}",
+        focus_path(&rt)
+    );
+
+    // Add gives way to "Added" (here as a finished download leaves it): the next result.
+    scene(&mut rt, "find");
+    tab_to(&mut rt, "add-0");
+    let url = rt.state.find.hits[0].url.clone();
+    rt.update(move |s, _| s.find.added.push(url));
+    settle(&mut rt);
+    assert!(
+        focus_path(&rt).ends_with("/preview-1"),
+        "{}",
+        focus_path(&rt)
+    );
+}

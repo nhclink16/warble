@@ -1727,11 +1727,12 @@ fn cable_callout(k: &Kit) -> El {
                     .icon(&OPEN)
                     .variant(ButtonVariant::Submit)
                     .on_press_tx(|s: &mut State, tx| {
-                        if let Err(e) = tx.open_url(VB_CABLE_URL) {
-                            s.notice = Some(format!(
-                                "Couldn’t open your browser: {e}. Go to vb-audio.com/Cable to get \
+                        if tx.open_url(VB_CABLE_URL).is_err() {
+                            s.notice = Some(
+                                "Couldn’t open your browser. Go to vb-audio.com/Cable to get \
                                  VB-CABLE."
-                            ));
+                                    .into(),
+                            );
                         }
                     })
                     .build(k),
