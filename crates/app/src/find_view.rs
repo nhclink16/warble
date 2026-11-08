@@ -12,8 +12,8 @@ use crate::library::{FREESOUND_KEY_URL, Hit, SITES};
 use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
-    BACK, BODY, CHECK, HEADING, HEADPHONES, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
-    SMALL, STOP, TITLE, WARNING, accent, card, danger, notice, scrolling, warn, wash,
+    BACK, BODY, CHECK, HEADING, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS,
+    SEARCH, SMALL, STOP, TITLE, WARNING, accent, card, danger, notice, scrolling, warn, wash,
 };
 use crate::youtube;
 
@@ -77,7 +77,7 @@ fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
         .w_full()
         .gap(8.0)
         .items_start()
-        .child(icon(&WARNING, 16.0 /* ICON */).color(if failed { danger() } else { warn() }))
+        .child(icon(&WARNING, ICON).color(if failed { danger() } else { warn() }))
         .child(
             text(message.to_string())
                 .font(SMALL)
@@ -124,7 +124,7 @@ pub fn find_page(s: &State, k: &Kit) -> El {
             .radius(10.0)
             .fill(wash(k.c.page, accent(), 0.1))
             .border(1.0, accent().alpha(0.35))
-            .child(icon(&CHECK, 16.0 /* ICON */).color(accent()))
+            .child(icon(&CHECK, ICON).color(accent()))
             .child(
                 text(format!("Added “{name}” to your soundboard."))
                     .font(SMALL)
@@ -292,7 +292,7 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
         row()
             .gap(4.0)
             .center_y()
-            .child(icon(&CHECK, 16.0 /* ICON */).color(accent()))
+            .child(icon(&CHECK, ICON).color(accent()))
             .child(text("Added").font(SMALL).color(accent()))
     } else {
         Button::new("Add")
@@ -417,7 +417,7 @@ fn install_notice(k: &Kit) -> El {
                 .w_full()
                 .gap(8.0)
                 .items_start()
-                .child(icon(&WARNING, 16.0 /* ICON */).color(warn()).mt(1.0))
+                .child(icon(&WARNING, ICON).color(warn()).mt(1.0))
                 .child(
                     text(format!(
                         "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a \
@@ -491,7 +491,7 @@ fn sites_card(f: &Find, k: &Kit) -> El {
                         .child(text(site.name).font(LABEL).color(k.c.text_base))
                         .child(text(site.note).font(SMALL).color(k.c.text_muted).wrap()),
                 )
-                .child(icon(&OPEN, 16.0 /* ICON */).color(k.c.icon_muted)),
+                .child(icon(&OPEN, ICON).color(k.c.icon_muted)),
         );
     }
     // The section's trigger is its own 32-point row: less padding keeps its title where a
@@ -771,7 +771,6 @@ fn handle(k: &Kit, t: &Trim, end: bool, at: f32, inner: f32) -> El {
         .range_value(value, 0.0, t.duration())
         .range_step(t.step())
         .focusable(true)
-        .focus_ring(2.0, 2.0, k.c.border_focus)
         .absolute(at - EDGE, 0.0)
         .size(2.0 * EDGE, WAVE_H)
         .center()

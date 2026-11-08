@@ -251,7 +251,7 @@ impl Engine {
     }
 
     /// Decode a WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC) file into memory. Runs on the caller's thread.
-    /// Errors are plain English ("Couldn't read clip.mp3: unsupported format").
+    /// Errors are plain English and say what to do ("There’s no sound in “clip.mp3”. Try another file.").
     /// Clips longer than 5 minutes are refused. The mock accepts any path without reading it.
     pub fn load_sound(&self, path: &Path) -> Result<SoundId, String> {
         match &self.inner {

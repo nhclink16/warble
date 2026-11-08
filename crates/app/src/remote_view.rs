@@ -7,7 +7,7 @@ use rune::{Color, El, Tx, col, el, icon, oklch, row, text};
 use rune_kit::{Button, ControlSize, Kit, SegmentedControl, Switch};
 
 use crate::state::State;
-use crate::ui::{BODY, HEADING, SMALL, WARNING, card, danger};
+use crate::ui::{BODY, HEADING, ICON, SMALL, WARNING, card, danger};
 
 /// How long a copied link, key and all, stays on the clipboard.
 const COPIED_FOR: Duration = Duration::from_secs(2 * 60);
@@ -154,7 +154,7 @@ fn warning(k: &Kit, why: &str) -> El {
         .w_full()
         .gap(8.0)
         .items_start()
-        .child(icon(&WARNING, 16.0 /* ICON */).color(danger()).mt(1.0))
+        .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
         .child(
             text(why.to_string())
                 .font(BODY)

@@ -28,6 +28,8 @@ fn main() {
         min_size: Some((360.0, 540.0)),
         scenes: ui::SCENES,
         poll: Some(State::poll),
+        // Escape leaves Find sounds or Trim even when nothing on the page has focus.
+        on_key: Some(find_view::escape_goes_back),
         ..AppSpec::new("Warble", (400.0, 620.0), State::mock, ui::view)
     });
     let handle = app.handle();
