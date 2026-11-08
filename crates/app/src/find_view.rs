@@ -515,7 +515,7 @@ fn sites_card(f: &Find, k: &Kit) -> El {
     }
     // The section's trigger is its own 32-point row: less room above keeps its title where
     // a group's title sits.
-    group(k).key("sites").pt(8.0).child(
+    group(k).key("sites").pt(12.0).child(
         disclosure(
             k,
             "Good places to find sounds",

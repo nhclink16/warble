@@ -327,7 +327,8 @@ pub(crate) fn disclosure(
         k.glyph.triangle_right
     };
     // The hover fill reaches past the title on both sides, so the title lines up with the
-    // printed titles around it and still has room inside the fill.
+    // printed titles around it and still has room inside the fill. In a group with `pt(12)`,
+    // the title and what opens under it sit where a group's title and content do.
     let trigger = row()
         .key("trigger")
         .role("button")
@@ -360,7 +361,7 @@ pub(crate) fn disclosure(
                 .role("region")
                 .label(title.to_string())
                 .w_full()
-                .pt(4.0)
+                .pt(8.0)
                 .child(content.w_full()),
         );
     }
@@ -879,8 +880,10 @@ fn effect_card(s: &State, k: &Kit) -> El {
                         .font(if on {
                             DISPLAY
                         } else {
+                            // On the On caption's line, so the label above stays put.
                             TextStyle {
                                 weight: 500.0,
+                                line_height: DISPLAY.size * 1.25,
                                 ..TITLE
                             }
                         })
@@ -1927,7 +1930,7 @@ fn discord_card(s: &State, k: &Kit) -> El {
         .gap(GAP)
         .pb(4.0)
         .child(step("1", "Open Settings > Voice & Video."))
-        .child(step("2", "Set Input device to “CABLE Output (VB-Audio Virtual Cable)”."))
+        .child(step("2", "Set Input device to “CABLE Output (VB\u{2011}Audio Virtual Cable)”."))
         .child(step("3", "Turn off Noise suppression (Krisp) and Echo cancellation, or Discord strips the effects out."))
         .child(
             row()
@@ -1942,7 +1945,7 @@ fn discord_card(s: &State, k: &Kit) -> El {
                         .shrink(),
                 ),
         );
-    group(k).key("discord").pt(8.0).child(disclosure(
+    group(k).key("discord").pt(12.0).child(disclosure(
         k,
         "Set up Discord",
         s.discord_open,
@@ -2009,7 +2012,7 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
         }
         c = c.child(line);
     }
-    group(k).key("hotkeys").pt(8.0).child(disclosure(
+    group(k).key("hotkeys").pt(12.0).child(disclosure(
         k,
         "Hotkeys",
         s.hotkeys_open,
