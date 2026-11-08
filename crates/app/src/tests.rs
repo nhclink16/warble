@@ -1018,6 +1018,71 @@ fn not_now_and_add_hand_focus_on() {
         "{}",
         focus_path(&rt)
     );
+
+    // A result that's still downloading can't take focus: it goes on past it.
+    scene(&mut rt, "find");
+    let busy = rt.state.find.hits[2].url.clone();
+    rt.update(move |s, _| s.find.busy.push(busy));
+    settle(&mut rt);
+    tab_to(&mut rt, "add-1");
+    let url = rt.state.find.hits[1].url.clone();
+    rt.update(move |s, _| s.find.added.push(url));
+    settle(&mut rt);
+    assert!(
+        focus_path(&rt).ends_with("/preview-3"),
+        "{}",
+        focus_path(&rt)
+    );
+}
+
+#[test]
+fn stop_all_hands_focus_to_add_sounds_when_nothing_plays() {
+    let mut rt = app();
+    scene(&mut rt, "soundboard");
+    assert!(!rt.state.status.playing.is_empty());
+    tab_to(&mut rt, "stop-all");
+    press(&mut rt, Key::Text(" ".into()));
+    assert!(rt.state.status.playing.is_empty());
+    assert!(
+        focus_path(&rt).ends_with("/add-sounds"),
+        "{}",
+        focus_path(&rt)
+    );
+    // Focus elsewhere stays put when a sound ends.
+    let id = rt.state.sounds[0].id;
+    rt.update(move |s, _| s.play(id));
+    settle(&mut rt);
+    tab_to(&mut rt, "find-sounds");
+    rt.update(|s, _| s.stop_sounds());
+    settle(&mut rt);
+    assert!(
+        focus_path(&rt).ends_with("/find-sounds"),
+        "{}",
+        focus_path(&rt)
+    );
+}
+
+#[test]
+fn remove_from_the_last_pads_menu_hands_focus_to_undo() {
+    for files in [vec!["Air horn.wav", "Bruh.wav"], vec!["Air horn.wav"]] {
+        let mut rt = app();
+        rt.drop_files(
+            files.into_iter().map(PathBuf::from).collect(),
+            Some((200.0, 300.0)),
+        );
+        settle(&mut rt);
+        let last = rt.state.sounds.last().unwrap().id;
+        tab_to(&mut rt, &format!("sound-{}", last.0));
+        press(&mut rt, Key::ContextMenu);
+        press(&mut rt, Key::Down);
+        press(&mut rt, Key::Enter);
+        assert!(rt.state.sounds.iter().all(|s| s.id != last), "removed");
+        assert!(
+            focus_path(&rt).ends_with("/undo-remove"),
+            "{}",
+            focus_path(&rt)
+        );
+    }
 }
 
 #[test]

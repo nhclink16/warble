@@ -305,12 +305,13 @@ fn hit_row(s: &State, f: &Find, k: &Kit, i: usize, hit: &Hit) -> El {
                 .build(k),
         )
         .key(format!("add-{i}"))
-        // It gives way to "Added": focus goes on to the next result, or the link field.
-        .focus_return(if i + 1 < f.hits.len() {
-            format!("hit-{}", i + 1)
-        } else {
-            "link-field".into()
-        })
+        // It gives way to "Added": focus goes on to the next result that isn't downloading
+        // (whose buttons can't take it), or the link field.
+        .focus_return(
+            (i + 1..f.hits.len())
+                .find(|&j| !f.is_busy(&f.hits[j].url))
+                .map_or_else(|| "link-field".into(), |j| format!("hit-{j}")),
+        )
     });
     row()
         .key(format!("hit-{i}"))

@@ -1280,6 +1280,14 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
             stop.border(1.0, wash(led(), Color::WHITE, 0.1))
                 .shadow(0.0, 12.0, led().alpha(0.35));
     }
+    // Stop all can't be pressed once nothing plays. If it had focus then, focus goes on to
+    // Add sounds: an empty marker beside it hands it on as it goes. (Rune scopes a zero-size
+    // marker's `focus_return` to its parent, and this one holds only Stop all.)
+    let stop = row().key("stop").child(stop).children(any_playing.then(|| {
+        el().key("stop-live")
+            .size(0.0, 0.0)
+            .focus_return("add-sounds")
+    }));
     let toolbar = row()
         .key("sound-tools")
         .w_full()
@@ -1494,7 +1502,7 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
     }
     let point = s.sound_menu.filter(|(m, _)| *m == id).map(|(_, p)| p);
     // Keyed by place: after Remove, the menu hands focus to the pad that slides into it.
-    rune_kit::context_menu(format!("sound-menu-{i}"), tile, point)
+    let pad = rune_kit::context_menu(format!("sound-menu-{i}"), tile, point)
         .item(MenuItem::new("Trim…").on_select(move |s: &mut State| {
             s.sound_menu = None;
             s.trim_sound(id);
@@ -1504,9 +1512,16 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             s.remove_sound(id);
         }))
         .on_close(|s: &mut State| s.sound_menu = None)
-        .build(&menu(k), layer)
-        // The grid's column sets the width, however long a name's words are.
-        .min_w(0.0)
+        .build(&menu(k), layer);
+    // Remove from the last pad leaves no pad in its place to take focus: then it goes to the
+    // Undo. A holder around the menu does that, after the menu's own return to its place.
+    if point.is_some()
+        && let Some(surface) = layer.pop()
+    {
+        layer.push(el().focus_return("undo-remove").child(surface));
+    }
+    // The grid's column sets the width, however long a name's words are.
+    pad.min_w(0.0)
 }
 
 /// An empty bank: nine dark sockets, numbered for the keys that will play them.
