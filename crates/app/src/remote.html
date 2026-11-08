@@ -494,13 +494,13 @@ function drawVoice(s) {
       b.innerHTML = '<span class="num" aria-hidden="true">' + (i + 1) + "</span>" + svg(p.icon);
       b.append(p.name);
       b.onclick = () => {
-        for (const o of presets.children) o.setAttribute("aria-checked", String(o === b));
+        for (const o of presets.children) check(o, o === b);
         act({ do: "preset", id: p.id });
       };
       return b;
     }));
   }
-  for (const b of presets.children) b.setAttribute("aria-checked", String(b.dataset.id === s.preset));
+  for (const b of presets.children) check(b, b.dataset.id === s.preset);
   presets.classList.toggle("off", !s.effect);
   const name = (s.presets.find((p) => p.id === s.preset) || {}).name || "";
   $("effect").classList.toggle("on", s.effect);
@@ -510,6 +510,23 @@ function drawVoice(s) {
   toggle($("monitor"), s.monitor);
   slider("monitor-volume", s.monitor_volume, pct(s.monitor_volume), s.monitor);
 }
+
+// The voices are one Tab stop, the chosen one.
+function check(b, on) {
+  b.setAttribute("aria-checked", String(on));
+  b.tabIndex = on ? 0 : -1;
+}
+
+// The arrow keys move through the voices and pick the one they reach, as in the window.
+$("presets").addEventListener("keydown", (e) => {
+  const all = [...$("presets").children], i = all.indexOf(e.target);
+  const to = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: all.length - 1 }[e.key];
+  if (i < 0 || to === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  const b = all[(to + all.length) % all.length];
+  b.focus();
+  if (b.getAttribute("aria-checked") !== "true") b.click();
+});
 
 const pct = (v) => Math.round(v * 100) + "%";
 // The mic gain slider runs 25%..400% with 100% in the middle, snapping there (as ui::pos_gain).
