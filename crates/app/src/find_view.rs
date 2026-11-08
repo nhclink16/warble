@@ -14,8 +14,8 @@ use crate::state::{State, Tab};
 use crate::trim::{self, Trim};
 use crate::ui::{
     BACK, BODY, CHECK, HEADPHONES, ICON, LABEL, NUMBER, OPEN, PAD, PLAY, PLUS, SCISSORS, SEARCH,
-    SMALL, STOP, TITLE, WARNING, as_key, danger, disclosure, fader_cap, group, notice, readout,
-    recess, scrolling, slot, title_row, tone, warn,
+    SMALL, STOP, TITLE, WARNING, as_key, danger, disclosure, fader_cap, group, readout, recess,
+    scrolling, slot, title_row, tone, warn,
 };
 use crate::youtube;
 
@@ -140,7 +140,6 @@ pub fn find_page(s: &State, k: &Kit) -> El {
                 .key("find-body")
                 // Room for the search field's edge at the top of the scroll view.
                 .pt(2.0)
-                .children(notice(s, k))
                 .children(saved)
                 .child(search_box(s, k))
                 .children(results(s, f, k))
@@ -612,7 +611,7 @@ pub fn trim_page(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
     }
     page.child(page_bar(k, "Trim", State::close_trim))
         .child(scrolling(
-            col().key("trim-body").pt(2.0).children(notice(s, k)).child(
+            col().key("trim-body").pt(2.0).child(
                 col()
                     .key("trim-card")
                     .w_full()

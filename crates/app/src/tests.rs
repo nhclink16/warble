@@ -59,6 +59,32 @@ fn holding(rt: &Runtime<State>) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+fn press(rt: &mut Runtime<State>, key: Key) {
+    rt.key(KeyEvent {
+        key,
+        mods: Mods::default(),
+    });
+    settle(rt);
+}
+
+/// The path of the element with keyboard focus, or "" with none.
+fn focus_path(rt: &Runtime<State>) -> String {
+    let e = rt.elements().into_iter().find(|e| e.focused);
+    e.map_or_else(String::new, |e| e.path)
+}
+
+/// Presses Tab until the element keyed `key`, or a field inside it, has focus.
+fn tab_to(rt: &mut Runtime<State>, key: &str) {
+    for _ in 0..40 {
+        let at = focus_path(rt);
+        if at.ends_with(&format!("/{key}")) || at.contains(&format!("/{key}/")) {
+            return;
+        }
+        press(rt, Key::Tab);
+    }
+    panic!("Tab never reaches {key}");
+}
+
 /// Runs frames until a page that just appeared has faded in and takes presses.
 fn settle(rt: &mut Runtime<State>) {
     for _ in 0..30 {
@@ -263,7 +289,7 @@ fn a_removed_sound_waits_aside_and_undo_puts_it_back() {
         .find(|e| e.key.as_deref() == Some("removed"));
     assert_eq!(
         row.and_then(|e| e.label).as_deref(),
-        Some("Removed “Air horn”.")
+        Some("Removed “Air horn”. Undo is next to it.")
     );
 
     tap(&mut rt, "undo-remove");
@@ -292,15 +318,20 @@ fn a_removal_is_for_good_once_dismissed_or_followed_and_outlasts_a_notice() {
         [sounds_dir(&rt).join(HOLD_DIR).join("Bruh.wav")]
     );
 
-    // No timer: the poll leaves it, and an unrelated notice only covers it for a while.
+    // No timer: the poll leaves it, and an unrelated notice shows above it, never over it.
     poll(&mut rt);
     assert!(rt.state.removed.is_some() && rt.find("removed").is_some());
     rt.update(|s, _| s.notice = Some("Something else went wrong.".into()));
     poll(&mut rt);
     assert!(rt.state.removed.is_some() && !holding(&rt).is_empty());
-    assert!(rt.find("removed").is_none(), "the notice shows first");
+    let notice = rt.find("notice").expect("the notice");
+    let removed = rt.find("removed").expect("the Undo still shows");
+    assert!(notice.1 < removed.1, "under the notice");
     tap(&mut rt, "dismiss-notice");
-    assert!(rt.find("removed").is_some(), "then the Undo again");
+    assert!(
+        rt.find("removed").is_some(),
+        "and stays once the notice goes"
+    );
 
     // Dismissed, it's gone for good.
     tap(&mut rt, "dismiss-removed");
@@ -604,4 +635,124 @@ fn the_phone_remote_says_when_there_is_no_network() {
             .is_some_and(|l| l.starts_with("Connect this PC"))
     });
     assert!(line.is_some(), "read out as one line");
+}
+
+#[test]
+fn a_notice_shows_once_above_whichever_page_shows() {
+    let mut rt = app();
+    // Raised on Setup, as a failed "Sign out all phones" is.
+    rt.update(|s, _| {
+        s.set_tab(Tab::Setup);
+        s.notice = Some("Couldn’t make a new code. Try again.".into());
+    });
+    settle(&mut rt);
+    let path = |rt: &Runtime<State>| {
+        let all: Vec<String> = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.key.as_deref() == Some("notice") && !e.exiting)
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(all.len(), 1, "{all:?}");
+        all[0].clone()
+    };
+    // The same element on every page, so a screen reader hears it once.
+    let on_setup = path(&rt);
+    for tab in [Tab::Voice, Tab::Soundboard] {
+        rt.update(move |s, _| s.set_tab(tab));
+        settle(&mut rt);
+        assert_eq!(path(&rt), on_setup, "{tab:?}");
+    }
+    rt.update(|s, _| s.open_find());
+    settle(&mut rt);
+    assert_eq!(path(&rt), on_setup, "Find sounds");
+    rt.update(|s, _| s.open_trim(Clip::new(vec![0.1; 8000], 8000), "Bruh"));
+    settle(&mut rt);
+    assert_eq!(path(&rt), on_setup, "Trim");
+}
+
+#[test]
+fn a_long_notice_scrolls_in_its_place() {
+    let mut rt = Runtime::new(State::mock(), ui::view, (360.0, 540.0), Env::new(true, 1.0));
+    settle(&mut rt);
+    scene(&mut rt, "load-error");
+    let long = "Couldn’t copy “A rather long file name from a sample pack, take 12 (final \
+                mix).wav” into Warble. Copy it to your Music folder, then add it from there.";
+    rt.update(move |s, _| s.notice = Some([long; 4].join("\n")));
+    settle(&mut rt);
+    let rect = |key: &str| {
+        let e = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some(key));
+        e.unwrap_or_else(|| panic!("no {key}")).rect
+    };
+    assert!(rect("notices")[3] <= 200.0, "{:?}", rect("notices"));
+    let footer = rect("sound-footer");
+    assert!(
+        footer[1] + footer[3] <= 540.0,
+        "the footer stays: {footer:?}"
+    );
+    let pads = rt.find("sounds").expect("the pads");
+    assert!(pads.1 < footer[1], "and the pads show above it");
+}
+
+#[test]
+fn dismiss_and_undo_hand_focus_to_what_comes_next() {
+    let mut rt = app();
+    let files = ["Air horn.wav", "Bruh.wav"].map(PathBuf::from).to_vec();
+    rt.drop_files(files, Some((200.0, 300.0)));
+    settle(&mut rt);
+    let air = rt.state.sounds[0].id;
+    rt.update(move |s, _| s.remove_sound(air));
+    settle(&mut rt);
+    let space = || Key::Text(" ".into());
+
+    // Undo: the board's first pad.
+    tab_to(&mut rt, "undo-remove");
+    press(&mut rt, space());
+    assert_eq!(rt.state.sounds.len(), 2);
+    let first = format!("/sound-{}", rt.state.sounds[0].id.0);
+    assert!(focus_path(&rt).ends_with(&first), "{}", focus_path(&rt));
+
+    // A problem over an Undo: Dismiss goes on to the Undo.
+    let bruh = rt.state.sounds[1].id;
+    rt.update(move |s, _| {
+        s.remove_sound(bruh);
+        s.notice = Some("Something went wrong.".into());
+    });
+    settle(&mut rt);
+    tab_to(&mut rt, "dismiss-notice");
+    press(&mut rt, space());
+    assert!(
+        focus_path(&rt).ends_with("/undo-remove"),
+        "{}",
+        focus_path(&rt)
+    );
+
+    // The last pad's Undo dismissed: Add sounds, on the empty board.
+    let last = rt.state.sounds[0].id;
+    rt.update(move |s, _| s.remove_sound(last));
+    settle(&mut rt);
+    tab_to(&mut rt, "dismiss-removed");
+    press(&mut rt, space());
+    assert!(
+        focus_path(&rt).ends_with("/add-sounds"),
+        "{}",
+        focus_path(&rt)
+    );
+
+    // On Find sounds: its search field.
+    rt.update(|s, _| {
+        s.open_find();
+        s.notice = Some("Something went wrong.".into());
+    });
+    settle(&mut rt);
+    tab_to(&mut rt, "dismiss-notice");
+    press(&mut rt, space());
+    assert!(
+        focus_path(&rt).contains("/search-field"),
+        "{}",
+        focus_path(&rt)
+    );
 }

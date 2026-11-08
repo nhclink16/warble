@@ -681,6 +681,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .fill(k.c.page)
         .child(header(s, &k))
         .child(tabs(s, &k))
+        .children(notice(s, &k))
         .child(body)
         .on_drop_files(|s: &mut State, files, _| s.add_sounds(files.to_vec()))
         .accepts_extensions(&DROP_EXTS)
@@ -702,6 +703,8 @@ pub(crate) fn scrolling(content: El) -> El {
                 stick_bottom: false,
             })
             .scroll_edge_fade(10.0)
+            // A control brought into view stops clear of the fade, its ring whole.
+            .scroll_margin(14.0)
             .child(content.w_full().px(PAD).pb(PAD).gap(GAP)),
     )
 }
@@ -1226,7 +1229,6 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
             .px(PAD)
             .pb(PAD)
             .gap(GAP)
-            .children(notice(s, k))
             .child(empty_state(k));
     }
     // Stop all comes first, where a hand reaches in a panic, and its rim lights while a
@@ -1297,17 +1299,10 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
         .key("soundboard")
         .grow(1.0)
         .min_h(0.0)
-        .child(
-            col()
-                .w_full()
-                .px(PAD)
-                .pb(10.0)
-                .gap(10.0)
-                .child(toolbar)
-                .children(notice(s, k)),
-        )
+        .child(col().w_full().px(PAD).pb(10.0).child(toolbar))
         .child(scrolling(
-            col().pt(2.0).child(grid).child(
+            // Room for the first row's focus ring.
+            col().pt(4.0).child(grid).child(
                 // The pads print their numbers; this says which keys they are.
                 text("The first nine play with Ctrl+Shift+1 to 9.")
                     .font(SMALL)
@@ -1543,20 +1538,32 @@ fn empty_state(k: &Kit) -> El {
         )
 }
 
-/// A dismissable line about something that went wrong, such as a file that didn't load, or
-/// else the Undo for a sound just removed.
-pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
-    if s.notice.is_none()
-        && let Some(r) = &s.removed
-    {
-        return Some(removed_row(k, r));
+/// The readouts under the tabs, the same on every page: a dismissable line about something
+/// that went wrong (a file that didn't load, say), and under it the Undo for a sound just
+/// removed. One place, so a screen reader hears each once whichever page shows.
+fn notice(s: &State, k: &Kit) -> Option<El> {
+    if s.notice.is_none() && s.removed.is_none() {
+        return None;
     }
-    let message = s.notice.clone()?;
-    Some(
+    // Where keyboard focus goes when one is dismissed or undone: the page's first control.
+    let after = match s.tab {
+        Tab::Soundboard if s.trim.is_some() => "trim-name",
+        Tab::Soundboard if s.find.open => "search-field",
+        Tab::Soundboard if s.sounds.is_empty() => "add-sounds",
+        Tab::Soundboard => "sounds",
+        Tab::Voice | Tab::Setup => "page",
+    };
+    let problem = s.notice.as_ref().map(|message| {
         readout(k)
             .key("notice")
             .role("alert")
             .label(message.clone())
+            // Dismissed above an Undo, focus goes on to the Undo.
+            .focus_return(if s.removed.is_some() {
+                "undo-remove"
+            } else {
+                after
+            })
             .items_start()
             .child(icon(&WARNING, ICON).color(danger()).mt(6.0))
             .child(
@@ -1575,7 +1582,27 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
                             .w_full()
                     })),
             )
-            .child(dismiss(k, "dismiss-notice", |s: &mut State| s.notice = None).mt(2.0)),
+            .child(dismiss(k, "dismiss-notice", |s: &mut State| s.notice = None).mt(2.0))
+    });
+    let removed = s
+        .removed
+        .as_ref()
+        .map(|r| removed_row(k, r).focus_return(after));
+    // A long list of problems scrolls in its place rather than push the page off the window.
+    Some(
+        col()
+            .key("notices")
+            .w_full()
+            .max_h(200.0)
+            .child(rune_kit::popover::fit_scroll(
+                col()
+                    .w_full()
+                    .px(PAD)
+                    .pb(10.0)
+                    .gap(8.0)
+                    .children(problem)
+                    .children(removed),
+            )),
     )
 }
 
@@ -1594,7 +1621,7 @@ fn removed_row(k: &Kit, r: &Removed) -> El {
     readout(k)
         .key("removed")
         .role("status")
-        .label(says.clone())
+        .label(format!("{says} Undo is next to it."))
         .center_y()
         .child(
             text(says)
@@ -2064,6 +2091,22 @@ pub const SCENES: &[Scene] = &[
         if let Some(id) = s.sounds.iter().find(|x| x.name == "Bruh").map(|x| x.id) {
             s.remove_sound(id);
         }
+    }),
+    // An Undo that couldn't put the file back: the notice says why, the Undo stays under it.
+    ("undo-failed", |s| {
+        s.add_sounds(
+            ["Air horn.mp3", "Bruh.wav"]
+                .map(std::path::PathBuf::from)
+                .to_vec(),
+        );
+        if let Some(id) = s.sounds.iter().find(|x| x.name == "Bruh").map(|x| x.id) {
+            s.remove_sound(id);
+        }
+        s.notice = Some(
+            "Couldn’t put “Bruh” back. Close any app that might be using it, then press Undo \
+             again."
+                .into(),
+        );
     }),
     ("remote", remote_view::scenes::on),
     ("remote-tailscale", remote_view::scenes::tailscale),

@@ -90,7 +90,8 @@ Scenes (`--list-scenes` prints them):
 
 - Voice: `voice` (the effect on), `voice-off`.
 - Soundboard: `soundboard` (one sound playing), `soundboard-empty` (nine empty sockets), `removed` (just after
-  removing a sound, with Undo), `load-error` (three files that didn't load), `drop` (files dragged over the window).
+  removing a sound, with Undo), `undo-failed` (an Undo that couldn't put the file back, the Undo still under it),
+  `load-error` (three files that didn't load), `drop` (files dragged over the window).
 - Find sounds and Trim: `find-start`, `find`, `find-offline`, `youtube-install`, `trim`.
 - Setup: `setup`, `no-cable`, `hotkeys-failed`, `audio-problem` (the microphone can't be opened), `remote`,
   `remote-tailscale`, `remote-no-network`.
