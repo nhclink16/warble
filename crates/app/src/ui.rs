@@ -7,7 +7,7 @@ use rune::{
 };
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
-    PaletteSeed, SegmentedControl, Select, SelectAppearance, Switch,
+    PaletteSeed, SegmentedControl, Select, SelectAppearance, StateColors, Switch,
 };
 use warble_engine::{DeviceInfo, Preset};
 
@@ -24,13 +24,19 @@ pub(crate) const PAD: f32 = 16.0;
 pub(crate) const GAP: f32 = 12.0;
 pub(crate) const LABEL_W: f32 = 58.0;
 
-pub(crate) const TITLE: TextStyle = TextStyle::new(15.0, 650.0);
-pub(crate) const HEADING: TextStyle = TextStyle::new(13.5, 600.0);
-pub(crate) const BODY: TextStyle = TextStyle::new(12.5, 400.0).lh(18.0);
-pub(crate) const LABEL: TextStyle = TextStyle::new(12.5, 500.0);
-pub(crate) const SMALL: TextStyle = TextStyle::new(11.5, 400.0).lh(16.0);
-pub(crate) const TINY: TextStyle = TextStyle::new(10.5, 500.0);
-pub(crate) const NUMBER: TextStyle = TextStyle::new(12.0, 500.0).features("'tnum' 1");
+// Whole sizes, on rune-kit's 13 (controls) and 11 (captions).
+pub(crate) const TITLE: TextStyle = TextStyle::new(16.0, 650.0);
+pub(crate) const HEADING: TextStyle = TextStyle::new(14.0, 600.0);
+pub(crate) const BODY: TextStyle = TextStyle::new(13.0, 400.0).lh(19.0);
+pub(crate) const LABEL: TextStyle = TextStyle::new(13.0, 500.0);
+pub(crate) const SMALL: TextStyle = TextStyle::new(12.0, 400.0).lh(18.0);
+pub(crate) const TINY: TextStyle = TextStyle::new(11.0, 500.0);
+pub(crate) const NUMBER: TextStyle = TextStyle::new(13.0, 500.0).features("'tnum' 1");
+
+/// Icons beside text, as rune-kit's buttons draw them (a 1.5 point stroke).
+pub(crate) const ICON: f32 = 16.0;
+/// The large glyphs: voice tiles, the drop overlay, the empty board.
+pub(crate) const ICON_TILE: f32 = 20.0;
 
 pub(crate) fn bg() -> Color {
     oklch(0.165, 0.01, 265.0)
@@ -50,11 +56,25 @@ pub(crate) fn ink() -> Color {
 }
 
 pub fn kit() -> Kit {
-    Kit::from_palette(PaletteSeed {
+    let mut k = Kit::from_palette(PaletteSeed {
         bg: bg(),
         fg: oklch(0.955, 0.005, 265.0),
         accent: accent(),
-    })
+    });
+    // Faint text carries hotkeys and device names, so it has to read: 6:1 on a card.
+    k.c.text_faint = oklch(0.68, 0.008, 265.0);
+    k.c.icon_faint = k.c.text_faint;
+    // The kit's warning and danger in the app's own colours.
+    let page = k.c.page;
+    let status = |c: Color| StateColors {
+        bg: wash(page, c, 0.12),
+        fg: c,
+        border: wash(page, c, 0.35),
+        icon: c,
+    };
+    k.c.warning = status(warn());
+    k.c.danger = status(danger());
+    k
 }
 
 /// `colour` washed over `base`, opaque.
@@ -125,7 +145,7 @@ glyph!(
 glyph!(
     CHIPMUNK,
     concat!(
-        r#"<path d="M1.25 8c.75-2.5 1.5-2.5 2.25 0s1.5 2.5 2.25 0 1.5-2.5 2.25 0 1.5 2.5 2.25 0 1.5-2.5 2.25 0 1.5 2.5 2.25 0" "#,
+        r#"<path d="M1.25 8c.75-4.5 1.5-4.5 2.25 0s1.5 4.5 2.25 0 1.5-4.5 2.25 0 1.5 4.5 2.25 0 1.5-4.5 2.25 0 1.5 4.5 2.25 0" "#,
         stroke!(),
         "/>"
     )
@@ -133,7 +153,7 @@ glyph!(
 glyph!(
     ROBOT,
     concat!(
-        r#"<path d="M1.25 10.5h2.5v-5h3v5h3v-5h3v5h1.5" "#,
+        r#"<path d="M1.25 11.5h2.5v-7h3v7h3v-7h3v7h1.5" "#,
         stroke!(),
         "/>"
     )
@@ -429,7 +449,7 @@ fn drop_overlay(k: &Kit) -> El {
             col()
                 .gap(10.0)
                 .center()
-                .child(icon(&PLUS, 30.0).color(accent()))
+                .child(icon(&PLUS, ICON_TILE).color(accent()))
                 .child(
                     text("Drop to add sounds")
                         .font(HEADING)
@@ -456,6 +476,7 @@ fn effect_card(s: &State, k: &Kit) -> El {
     } else {
         "Off: people hear your own voice".to_string()
     };
+    // The line wraps rather than cut off its consequence, so the card grows to fit it.
     let switch = Switch::new(on)
         .label("Voice effect")
         .hide_label()
@@ -466,7 +487,8 @@ fn effect_card(s: &State, k: &Kit) -> El {
     row()
         .key("effect")
         .w_full()
-        .h(70.0)
+        .min_h(70.0)
+        .py(12.0)
         .pl(16.0)
         .pr(14.0)
         .gap(GAP)
@@ -496,14 +518,16 @@ fn effect_card(s: &State, k: &Kit) -> El {
                 .child(text("Voice effect").font(HEADING).color(k.c.text_base))
                 .child(
                     row()
+                        .w_full()
                         .gap(8.0)
                         .center_y()
                         .child(keys(k, state::EFFECT_KEY))
                         .child(
                             text(detail)
                                 .font(SMALL)
-                                .color(if on { k.c.text_muted } else { k.c.text_faint })
-                                .truncate()
+                                .color(k.c.text_muted)
+                                .wrap()
+                                .grow(1.0)
                                 .shrink(),
                         ),
                 ),
@@ -524,7 +548,7 @@ fn preset_grid(s: &State, k: &Kit) -> El {
     for (i, p) in Preset::ALL.into_iter().enumerate() {
         grid = grid.child(preset_tile(k, p, i, p == current, on));
     }
-    if on { grid } else { grid.dim(0.6) }
+    grid
 }
 
 fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
@@ -549,14 +573,10 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
         .border(if selected { 1.5 } else { 1.0 }, border)
         .on_press(move |s: &mut State| s.select_preset(p))
         .press_scale(0.96)
-        .child(icon(preset_icon(p), 20.0).color(glyph).mb(1.0))
+        .child(icon(preset_icon(p), ICON_TILE).color(glyph).mb(1.0))
         .child(
             text(p.name())
-                .font(if selected {
-                    TextStyle::new(12.5, 620.0)
-                } else {
-                    LABEL
-                })
+                .font(LABEL)
                 .color(if selected {
                     k.c.text_base
                 } else {
@@ -765,16 +785,16 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
             el().absolute(0.0, (h - bar) / 2.0)
                 .size(knob / 2.0 + pos * travel, bar)
                 .radius(bar / 2.0)
-                .fill(if sl.enabled { accent() } else { k.c.text_faint }),
+                .fill(if sl.enabled { accent() } else { k.c.icon_faint }),
         )
         .child(
             el().absolute(pos * travel, (h - knob) / 2.0)
                 .size(knob, knob)
                 .radius(knob / 2.0)
-                .fill(oklch(0.97, 0.0, 0.0))
+                .fill(k.c.knob)
                 .shadow(1.0, 3.0, Color::BLACK.alpha(0.45)),
         );
-    let line = row()
+    row()
         .w_full()
         .h(22.0)
         .gap(GAP)
@@ -794,8 +814,7 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
                 .w(40.0)
                 .align(Align::End)
                 .a11y_hidden(),
-        );
-    if sl.enabled { line } else { line.dim(0.55) }
+        )
 }
 
 // --- Soundboard ---
@@ -1016,7 +1035,7 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
                         .truncate(),
                 )
                 .child(
-                    icon(if playing { &PLAYING } else { &PLAY }, 13.0).color(if playing {
+                    icon(if playing { &PLAYING } else { &PLAY }, ICON).color(if playing {
                         accent()
                     } else {
                         k.c.icon_faint
@@ -1055,7 +1074,7 @@ fn empty_state(k: &Kit) -> El {
                 .fill(k.c.layer_02)
                 .center()
                 .mb(4.0)
-                .child(icon(&SPEAKER, 24.0).color(k.c.icon_muted)),
+                .child(icon(&SPEAKER, ICON_TILE).color(k.c.icon_muted)),
         )
         .child(text("No sounds yet").font(HEADING).color(k.c.text_base))
         .child(
@@ -1099,7 +1118,7 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
             .radius(10.0)
             .fill(wash(k.c.page, danger(), 0.12))
             .border(1.0, danger().alpha(0.35))
-            .child(icon(&WARNING, 15.0).color(danger()).mt(2.0))
+            .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
             .child(
                 // One paragraph per line: each file that didn't load, say.
                 col()
@@ -1196,7 +1215,7 @@ fn cable_callout(k: &Kit) -> El {
             row()
                 .gap(8.0)
                 .center_y()
-                .child(icon(&WARNING, 16.0).color(warn()))
+                .child(icon(&WARNING, ICON).color(warn()))
                 .child(text("VB-CABLE isn’t installed").font(HEADING).color(k.c.text_base)),
         )
         .child(
@@ -1271,11 +1290,11 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
                 .label(e.clone())
                 .gap(8.0)
                 .items_start()
-                .child(icon(&WARNING, 14.0).color(danger()).mt(1.0))
+                .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
                 .child(
                     text(e.clone())
                         .font(SMALL)
-                        .color(danger())
+                        .color(k.c.text_base)
                         .wrap()
                         .grow(1.0)
                         .shrink()
@@ -1460,11 +1479,11 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
                     .label(says.clone())
                     .gap(6.0)
                     .items_start()
-                    .child(icon(&WARNING, 13.0).color(danger()).mt(1.0))
+                    .child(icon(&WARNING, ICON).color(danger()).mt(1.0))
                     .child(
                         text(says)
                             .font(SMALL)
-                            .color(danger())
+                            .color(k.c.text_base)
                             .wrap()
                             .grow(1.0)
                             .shrink()
