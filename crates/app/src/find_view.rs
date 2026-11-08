@@ -64,10 +64,16 @@ fn working(k: &Kit, key: &str, what: &str) -> El {
     row()
         .key(key.to_string())
         .role("status")
+        .label(what.to_string())
         .gap(8.0)
         .center_y()
         .child(Spinner::new().size(14.0).build(k))
-        .child(text(what.to_string()).font(SMALL).color(k.c.text_muted))
+        .child(
+            text(what.to_string())
+                .font(SMALL)
+                .color(k.c.text_muted)
+                .a11y_hidden(),
+        )
 }
 
 /// A short line about a problem: something that failed, read out at once, or (`failed` false)
@@ -76,6 +82,7 @@ fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
     row()
         .key(key.to_string())
         .role(if failed { "alert" } else { "status" })
+        .label(message.to_string())
         .w_full()
         .gap(8.0)
         .items_start()
@@ -86,7 +93,8 @@ fn problem(k: &Kit, key: &str, failed: bool, message: &str) -> El {
                 .color(k.c.text_base)
                 .wrap()
                 .grow(1.0)
-                .shrink(),
+                .shrink()
+                .a11y_hidden(),
         )
 }
 
@@ -114,18 +122,21 @@ pub fn find_page(s: &State, k: &Kit) -> El {
     let f = &s.find;
     // Added sounds stay on this PC until played, so the check is the panel's ink, not the LED.
     let saved = f.saved.as_ref().map(|name| {
+        let says = format!("Added “{name}” to your soundboard.");
         readout(k)
             .key("saved")
             .role("status")
+            .label(says.clone())
             .center_y()
             .child(icon(&CHECK, ICON).color(k.c.icon_base))
             .child(
-                text(format!("Added “{name}” to your soundboard."))
+                text(says)
                     .font(SMALL)
                     .color(k.c.text_base)
                     .wrap()
                     .grow(1.0)
-                    .shrink(),
+                    .shrink()
+                    .a11y_hidden(),
             )
     });
     col()
@@ -400,6 +411,11 @@ fn youtube_card(f: &Find, k: &Kit) -> El {
 /// Said once, before yt-dlp is first downloaded: a line in the card, with its buttons under the
 /// words.
 fn install_notice(k: &Kit) -> El {
+    let says = format!(
+        "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a free tool, from \
+         its official GitHub page. Warble keeps it up to date after\u{a0}that.",
+        youtube::TOOL_SIZE
+    );
     col()
         .key("install-notice")
         .w_full()
@@ -407,22 +423,19 @@ fn install_notice(k: &Kit) -> El {
         .child(
             row()
                 .role("status")
+                .label(says.clone())
                 .w_full()
                 .gap(8.0)
                 .items_start()
                 .child(icon(&WARNING, ICON).color(warn()).mt(1.0))
                 .child(
-                    text(format!(
-                        "To get audio from YouTube and X, Warble downloads yt\u{2011}dlp ({}), a \
-                         free tool, from its official GitHub page. Warble keeps it up to date \
-                         after\u{a0}that.",
-                        youtube::TOOL_SIZE
-                    ))
-                    .font(BODY)
-                    .color(k.c.text_base)
-                    .wrap()
-                    .grow(1.0)
-                    .shrink(),
+                    text(says)
+                        .font(BODY)
+                        .color(k.c.text_base)
+                        .wrap()
+                        .grow(1.0)
+                        .shrink()
+                        .a11y_hidden(),
                 ),
         )
         .child(

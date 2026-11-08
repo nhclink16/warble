@@ -807,3 +807,53 @@ fn the_pill_pressed_from_the_keyboard_hands_focus_to_setup() {
     assert_eq!(rt.state.tab, Tab::Setup);
     assert!(focus_path(&rt).contains("/setup/"), "{}", focus_path(&rt));
 }
+
+#[test]
+fn status_and_alert_lines_are_read_once() {
+    // How many nodes a screen reader would read `says` from.
+    let read = |rt: &Runtime<State>, says: &str| {
+        a11y(rt)
+            .iter()
+            .filter(|n| n["name"] == says || n["value"] == says)
+            .count()
+    };
+    let mut rt = app();
+    scene(&mut rt, "find-offline");
+    let offline = rt.state.find.problem.clone().unwrap();
+    assert_eq!(read(&rt, &offline), 1, "a failed search");
+
+    rt.update(|s, _| s.find.youtube = YouTube::Fetching);
+    settle(&mut rt);
+    assert_eq!(read(&rt, "Getting the audio…"), 1, "work under way");
+
+    rt.update(|s, _| s.find.youtube = YouTube::Failed(crate::youtube::UNREADABLE.into()));
+    settle(&mut rt);
+    assert_eq!(read(&rt, crate::youtube::UNREADABLE), 1, "a failed link");
+
+    rt.update(|s, _| {
+        s.find.youtube = YouTube::AskToInstall;
+        s.find.saved = Some("Bruh".into());
+    });
+    settle(&mut rt);
+    assert_eq!(
+        read(&rt, "Added “Bruh” to your soundboard."),
+        1,
+        "a sound added"
+    );
+    let install = a11y(&rt)
+        .into_iter()
+        .filter(|n| {
+            n["name"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("To get audio"))
+        })
+        .count();
+    assert_eq!(install, 1, "the yt-dlp notice");
+
+    let mut rt = app();
+    scene(&mut rt, "remote");
+    let why = "Another app is using port 47823. Close it, then turn the remote on again.";
+    rt.update(move |s, _| s.remote.problem = Some(why.into()));
+    settle(&mut rt);
+    assert_eq!(read(&rt, why), 1, "the remote's problem");
+}

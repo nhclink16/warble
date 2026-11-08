@@ -157,6 +157,7 @@ fn warning(k: &Kit, why: &str) -> El {
     row()
         .key("remote-problem")
         .role("alert")
+        .label(why.to_string())
         .w_full()
         .gap(8.0)
         .items_start()
@@ -167,7 +168,8 @@ fn warning(k: &Kit, why: &str) -> El {
                 .color(k.c.text_base)
                 .wrap()
                 .grow(1.0)
-                .shrink(),
+                .shrink()
+                .a11y_hidden(),
         )
 }
 
