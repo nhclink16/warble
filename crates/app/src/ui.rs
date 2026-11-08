@@ -6,8 +6,8 @@ use rune::{
     row, text,
 };
 use rune_kit::{
-    Button, ButtonVariant, ControlSize, Keybind, Kit, PaletteSeed, SegmentedControl, Select,
-    SelectAppearance, Switch,
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, PaletteSeed,
+    SegmentedControl, Select, SelectAppearance, Switch,
 };
 use warble_engine::{DeviceInfo, Preset};
 
@@ -291,6 +291,8 @@ pub(crate) fn preset_icon(p: Preset) -> &'static Icon {
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let k = kit();
+    // One keyboard focus ring for every control, in the kit's focus blue.
+    cx.focus_ring(2.0, 2.0, k.c.border_focus);
     let mut layer = Vec::new();
     let body = match s.tab {
         Tab::Voice => scrolling(voice(s, cx, &k)),
@@ -393,6 +395,7 @@ fn status_pill(s: &State, k: &Kit) -> El {
     if !s.status.running && s.tab != Tab::Setup {
         pill = pill
             .help("Open Setup")
+            .focusable(true)
             .cursor(Cursor::Pointer)
             .hover(k.c.hover)
             .press(k.c.pressed)
@@ -516,7 +519,8 @@ fn preset_grid(s: &State, k: &Kit) -> El {
         .equal_columns(4)
         .gaps(8.0, 8.0)
         .role("radiogroup")
-        .label("Voice preset");
+        .label("Voice")
+        .focus_group();
     for (i, p) in Preset::ALL.into_iter().enumerate() {
         grid = grid.child(preset_tile(k, p, i, p == current, on));
     }
@@ -536,6 +540,7 @@ fn preset_tile(k: &Kit, p: Preset, i: usize, selected: bool, on: bool) -> El {
         .label(p.name())
         .checked(selected)
         .focusable(true)
+        .focus_selected(selected)
         .h(78.0)
         .gap(5.0)
         .center()
@@ -718,7 +723,6 @@ fn slider(k: &Kit, cx: &mut Cx<State>, sl: Slider) -> El {
         .range_value(f64::from(pos), 0.0, 1.0)
         .range_step(0.05)
         .focusable(true)
-        .focus_ring(2.0, 2.0, k.c.border_focus)
         .grow(1.0)
         .h(h)
         .cursor(Cursor::Pointer)
@@ -1056,6 +1060,8 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
     Some(
         row()
             .key("notice")
+            .role("alert")
+            .label(message.clone())
             .w_full()
             .pl(12.0)
             .pr(6.0)
@@ -1073,19 +1079,17 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
                     .wrap()
                     .grow(1.0)
                     .shrink()
-                    .mt(1.0),
+                    .mt(1.0)
+                    .a11y_hidden(),
             )
             .child(
-                el().key("dismiss-notice")
-                    .role("button")
+                IconButton::new(&CLOSE)
+                    .variant(IconButtonVariant::GhostMuted)
+                    .control_size(ControlSize::Small)
                     .label("Dismiss")
-                    .size(20.0, 20.0)
-                    .radius(5.0)
-                    .center()
-                    .hover(k.c.hover)
-                    .press(k.c.pressed)
                     .on_press(|s: &mut State| s.notice = None)
-                    .child(icon(&CLOSE, 12.0).color(k.c.icon_muted)),
+                    .build(k)
+                    .key("dismiss-notice"),
             ),
     )
 }
@@ -1183,6 +1187,9 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
     if let Some(e) = st.error.as_ref().filter(|_| !s.cable_missing()) {
         c = c.child(
             row()
+                .key("device-error")
+                .role("alert")
+                .label(e.clone())
                 .gap(8.0)
                 .items_start()
                 .child(icon(&WARNING, 14.0).color(danger()).mt(1.0))
@@ -1192,7 +1199,8 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
                         .color(danger())
                         .wrap()
                         .grow(1.0)
-                        .shrink(),
+                        .shrink()
+                        .a11y_hidden(),
                 ),
         );
     }
@@ -1376,18 +1384,22 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
                 .iter()
                 .map(|(c, _)| state::keycaps(c).join("+"))
                 .collect();
+            let says = format!("{} didn’t work: {why}.", which.join(", "));
             line = line.child(
                 row()
+                    .role("alert")
+                    .label(says.clone())
                     .gap(6.0)
                     .items_start()
                     .child(icon(&WARNING, 13.0).color(danger()).mt(1.0))
                     .child(
-                        text(format!("{} didn’t work: {why}.", which.join(", ")))
+                        text(says)
                             .font(SMALL)
                             .color(danger())
                             .wrap()
                             .grow(1.0)
-                            .shrink(),
+                            .shrink()
+                            .a11y_hidden(),
                     ),
             );
         }
