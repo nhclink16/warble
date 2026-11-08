@@ -386,3 +386,48 @@ fn a_tiles_context_menu_trims_and_removes_from_the_keyboard() {
     assert!(rt.state.sounds.is_empty(), "Remove");
     assert!(rt.state.sound_menu.is_none());
 }
+
+#[test]
+fn hotkey_failures_name_the_keys_and_say_what_to_do() {
+    use rune::ShortcutError;
+    let mut s = State::mock();
+    let taken = crate::why(&ShortcutError::Conflict);
+    s.hotkey_failures = vec![
+        (crate::state::sound_key(0), taken.clone()),
+        (crate::state::sound_key(1), taken),
+        (
+            crate::state::EFFECT_KEY.into(),
+            crate::why(&ShortcutError::PermissionDenied),
+        ),
+    ];
+    assert_eq!(
+        ui::hotkey_problems(&s, None),
+        [
+            "Another app is using Ctrl+Shift+1 and Ctrl+Shift+2. Close that app, then quit \
+             Warble from the tray and open it again.",
+            "Warble wasn’t allowed to use Ctrl+Alt+V. Quit Warble from the tray, open it again, \
+             and allow its hotkeys.",
+        ]
+    );
+    let effect = [crate::state::EFFECT_KEY.to_string()];
+    assert_eq!(ui::hotkey_problems(&s, Some(&effect)).len(), 1);
+}
+
+#[test]
+fn every_file_that_fails_to_load_is_named() {
+    let mut s = State::mock();
+    let errors = ["Gone.wav", "Lost.mp3", "Missing.flac"]
+        .map(|f| {
+            warble_engine::Clip::decode(Path::new(f), 300)
+                .err()
+                .unwrap()
+        })
+        .to_vec();
+    s.loaded((Vec::new(), errors));
+    let notice = s.notice.unwrap();
+    assert_eq!(notice.lines().count(), 3, "{notice}");
+    for name in ["“Gone.wav”", "“Lost.mp3”", "“Missing.flac”"] {
+        assert!(notice.contains(name), "{name} in {notice}");
+    }
+    assert!(!notice.contains("more"));
+}

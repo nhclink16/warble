@@ -90,7 +90,7 @@ impl State {
                 self.settings.remote_key = key;
                 self.changed();
             }
-            Err(e) => self.notice = Some(format!("Couldn’t make a new code: {e}")),
+            Err(e) => self.notice = Some(format!("Couldn’t make a new code: {e}. Try again.")),
         }
     }
 
@@ -124,7 +124,11 @@ impl State {
                 r.server = Some(server);
                 r.problem = None;
             }
-            Err(e) => r.problem = Some(format!("Couldn’t start the remote: {e}")),
+            Err(e) => {
+                r.problem = Some(format!(
+                    "Couldn’t start the remote: {e}. Turn it off and on again."
+                ))
+            }
         }
     }
 
@@ -188,7 +192,7 @@ impl State {
             return Err("Paste a link that starts with https://".into());
         }
         if self.trim.is_some() {
-            return Err("Save or close the clip open on your PC first.".into());
+            return Err("Add or close the sound open in Trim on your PC first.".into());
         }
         if matches!(self.find.youtube, YouTube::Installing | YouTube::Fetching) {
             return Err("Warble is still getting the last link.".into());
@@ -220,7 +224,7 @@ impl State {
             YouTube::Failed(e) => ("failed", e.as_str()),
             YouTube::Idle if self.trim.is_some() => (
                 "pc",
-                "Ready on your PC. Open Warble there to trim and save it.",
+                "Ready on your PC. Open Warble there to trim and add it.",
             ),
             YouTube::Idle => ("idle", ""),
         };

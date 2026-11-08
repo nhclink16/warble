@@ -21,20 +21,28 @@ pub(crate) fn decode(path: &Path) -> Result<Sound, String> {
     decode_capped(path, MAX_SECONDS)
 }
 
-/// `decode`, refusing clips longer than `max_seconds` (a whole number of minutes).
+/// `decode`, refusing clips longer than `max_seconds` (a whole number of minutes). Each error
+/// names the file and says what to do next.
 pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, String> {
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
-    let fail = |why: &str| format!("Couldn't read {name}: {why}");
+    let unsupported = || {
+        format!(
+            "Warble can’t play “{name}”. It may be damaged, or renamed from another kind of file. Try another copy."
+        )
+    };
+    let no_audio = || format!("There’s no sound in “{name}”. Try another file.");
 
-    let file = File::open(path).map_err(|e| {
-        fail(match e.kind() {
-            ErrorKind::NotFound => "file not found",
-            ErrorKind::PermissionDenied => "permission denied",
-            _ => "couldn't open the file",
-        })
+    let file = File::open(path).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => {
+            format!("Couldn’t find “{name}”. If you moved it, add it again from its new folder.")
+        }
+        ErrorKind::PermissionDenied => format!(
+            "Warble isn’t allowed to open “{name}”. Copy it to your Music folder and add it from there."
+        ),
+        _ => format!("Couldn’t open “{name}”. Close any app that’s using it, then try again."),
     })?;
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -48,19 +56,19 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
             FormatOptions::default(),
             MetadataOptions::default(),
         )
-        .map_err(|_| fail("unsupported format"))?;
+        .map_err(|_| unsupported())?;
     let track = format
         .default_track(TrackType::Audio)
-        .ok_or_else(|| fail("there's no audio in it"))?;
+        .ok_or_else(no_audio)?;
     let track_id = track.id;
     let params = track
         .codec_params
         .as_ref()
         .and_then(|p| p.audio())
-        .ok_or_else(|| fail("unsupported format"))?;
+        .ok_or_else(unsupported)?;
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(params, &AudioDecoderOptions::default())
-        .map_err(|_| fail("unsupported format"))?;
+        .map_err(|_| unsupported())?;
 
     let mut samples: Vec<f32> = Vec::new();
     let mut rate = 0;
@@ -72,7 +80,7 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
             Err(Error::IoError(e)) if e.kind() == ErrorKind::UnexpectedEof => break,
             // A damaged tail: keep what decoded.
             Err(_) if !samples.is_empty() => break,
-            Err(_) => return Err(fail("the file is damaged")),
+            Err(_) => return Err(format!("“{name}” is damaged. Try another copy.")),
         };
         if packet.track_id != track_id {
             continue;
@@ -80,7 +88,7 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         let audio = match decoder.decode(&packet) {
             Ok(audio) => audio,
             Err(Error::DecodeError(_) | Error::IoError(_)) => continue,
-            Err(_) => return Err(fail("unsupported format")),
+            Err(_) => return Err(unsupported()),
         };
         if rate == 0 {
             rate = audio.spec().rate();
@@ -97,13 +105,13 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         }
         if samples.len() as u64 > max_seconds * rate as u64 {
             return Err(format!(
-                "{name} is longer than {} minutes. Pick a shorter clip.",
+                "“{name}” is longer than {} minutes. Pick a shorter sound.",
                 max_seconds / 60
             ));
         }
     }
     if samples.is_empty() || rate == 0 {
-        return Err(fail("there's no audio in it"));
+        return Err(no_audio());
     }
     samples.shrink_to_fit();
     Ok(Sound { samples, rate })
@@ -164,11 +172,22 @@ pub(crate) mod tests {
     fn garbage_gets_a_plain_error() {
         let path = temp_file("noise.mp3", &[0x5a; 4096]);
         let err = decode(&path).err().expect("rejected");
-        assert_eq!(err, "Couldn't read noise.mp3: unsupported format");
+        assert_eq!(
+            err,
+            "Warble can’t play “noise.mp3”. It may be damaged, or renamed from another kind of \
+             file. Try another copy."
+        );
         let err = decode(Path::new("/definitely/not/here.wav"))
             .err()
             .expect("rejected");
-        assert_eq!(err, "Couldn't read here.wav: file not found");
+        assert_eq!(
+            err,
+            "Couldn’t find “here.wav”. If you moved it, add it again from its new folder."
+        );
+        let err = decode(&temp_file("empty.wav", &wav(8000, 1, &[])))
+            .err()
+            .expect("rejected");
+        assert_eq!(err, "There’s no sound in “empty.wav”. Try another file.");
     }
 
     #[test]
@@ -178,7 +197,7 @@ pub(crate) mod tests {
         let err = decode(&path).err().expect("rejected");
         assert_eq!(
             err,
-            "long.wav is longer than 5 minutes. Pick a shorter clip."
+            "“long.wav” is longer than 5 minutes. Pick a shorter sound."
         );
     }
 }

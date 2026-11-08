@@ -202,12 +202,22 @@ fn register_hotkeys(s: &mut State) {
     }
 }
 
+/// What went wrong and what to do, as the Setup tab says it. `{keys}` stands for the hotkeys
+/// that failed for this reason.
 fn why(e: &ShortcutError) -> String {
     match e {
-        ShortcutError::Conflict => "taken by another app".into(),
-        ShortcutError::Unsupported => "this desktop doesn’t allow global hotkeys".into(),
-        ShortcutError::PermissionDenied => "permission was declined".into(),
-        other => other.to_string(),
+        ShortcutError::Conflict => "Another app is using {keys}. Close that app, then quit Warble \
+                                    from the tray and open it again."
+            .into(),
+        ShortcutError::Unsupported => {
+            "This desktop doesn’t let apps use hotkeys. Use Warble’s window instead.".into()
+        }
+        ShortcutError::PermissionDenied => "Warble wasn’t allowed to use {keys}. Quit Warble from \
+                                            the tray, open it again, and allow its hotkeys."
+            .into(),
+        other => format!(
+            "Warble couldn’t set up {{keys}} ({other}). Quit Warble from the tray and open it again."
+        ),
     }
 }
 

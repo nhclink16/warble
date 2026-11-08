@@ -1101,14 +1101,20 @@ pub(crate) fn notice(s: &State, k: &Kit) -> Option<El> {
             .border(1.0, danger().alpha(0.35))
             .child(icon(&WARNING, 15.0).color(danger()).mt(2.0))
             .child(
-                text(message)
-                    .font(SMALL)
-                    .color(k.c.text_base)
-                    .wrap()
+                // One paragraph per line: each file that didn't load, say.
+                col()
+                    .gap(4.0)
                     .grow(1.0)
                     .shrink()
                     .mt(1.0)
-                    .a11y_hidden(),
+                    .a11y_hidden()
+                    .children(message.lines().map(|line| {
+                        text(line.to_string())
+                            .font(SMALL)
+                            .color(k.c.text_base)
+                            .wrap()
+                            .w_full()
+                    })),
             )
             .child(
                 IconButton::new(&CLOSE)
@@ -1209,7 +1215,10 @@ fn cable_callout(k: &Kit) -> El {
                     .variant(ButtonVariant::Submit)
                     .on_press_tx(|s: &mut State, tx| {
                         if let Err(e) = tx.open_url(VB_CABLE_URL) {
-                            s.notice = Some(format!("Couldn’t open the browser: {e}"));
+                            s.notice = Some(format!(
+                                "Couldn’t open your browser: {e}. Go to vb-audio.com/Cable to get \
+                                 VB-CABLE."
+                            ));
                         }
                     })
                     .build(k)
@@ -1239,7 +1248,7 @@ fn devices_card(s: &State, k: &Kit, layer: &mut Vec<El>) -> El {
             k,
             layer,
             Picker::Cable,
-            "Call output (VB-CABLE)",
+            "Virtual cable",
             "Auto-detect VB-CABLE",
             &s.devices.outputs,
             st.cable_name.as_deref(),
@@ -1326,10 +1335,14 @@ fn picker(
         .w_full();
     // With the default chosen, say which device that is.
     let using = using.filter(|_| chosen.is_none()).map(|u| {
-        text(format!("Using {u}"))
-            .font(SMALL)
-            .color(k.c.text_faint)
-            .truncate()
+        text(if which == Picker::Cable {
+            format!("Sending to {u}")
+        } else {
+            format!("Using {u}")
+        })
+        .font(SMALL)
+        .color(k.c.text_faint)
+        .truncate()
     });
     col()
         .w_full()
@@ -1393,7 +1406,7 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
             state::keycaps(state::EFFECT_KEY),
         ),
         (
-            "Pick a preset",
+            "Pick a voice",
             presets,
             vec!["Ctrl".into(), "Alt".into(), "1–8".into()],
         ),
@@ -1403,7 +1416,7 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
             state::keycaps(state::MONITOR_KEY),
         ),
         (
-            "Stop sounds",
+            "Stop all sounds",
             vec![state::STOP_KEY.into()],
             state::keycaps(state::STOP_KEY),
         ),
@@ -1424,11 +1437,6 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
             ),
     );
     for (what, chords, caps) in rows {
-        let failed: Vec<&(String, String)> = s
-            .hotkey_failures
-            .iter()
-            .filter(|(c, _)| chords.contains(c))
-            .collect();
         let mut line = col().w_full().gap(4.0).child(
             row()
                 .w_full()
@@ -1438,23 +1446,14 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
                 .child(
                     text(what)
                         .font(BODY)
-                        .color(if failed.is_empty() {
-                            k.c.text_base
-                        } else {
-                            k.c.text_muted
-                        })
+                        .color(k.c.text_base)
                         .grow(1.0)
                         .shrink()
                         .truncate(),
                 )
                 .child(Keybind::new(&caps).build(k)),
         );
-        if let Some((_, why)) = failed.first() {
-            let which: Vec<String> = failed
-                .iter()
-                .map(|(c, _)| state::keycaps(c).join("+"))
-                .collect();
-            let says = format!("{} didn’t work: {why}.", which.join(", "));
+        for says in hotkey_problems(s, Some(&chords)) {
             line = line.child(
                 row()
                     .role("alert")
@@ -1476,6 +1475,33 @@ fn hotkeys_card(s: &State, k: &Kit) -> El {
         c = c.child(line);
     }
     c
+}
+
+/// The hotkeys that didn't register (those among `chords`, or all of them) as sentences, one
+/// per reason: "Another app is using Ctrl+Shift+1 and Ctrl+Shift+2. Close that app, …".
+pub(crate) fn hotkey_problems(s: &State, chords: Option<&[String]>) -> Vec<String> {
+    let mut reasons: Vec<(&str, Vec<String>)> = Vec::new();
+    for (chord, why) in &s.hotkey_failures {
+        if chords.is_some_and(|c| !c.contains(chord)) {
+            continue;
+        }
+        let caps = state::keycaps(chord).join("+");
+        match reasons.iter_mut().find(|(w, _)| w == why) {
+            Some((_, keys)) => keys.push(caps),
+            None => reasons.push((why, vec![caps])),
+        }
+    }
+    reasons
+        .into_iter()
+        .map(|(why, keys)| {
+            let list = match keys.split_last() {
+                Some((last, [])) => last.clone(),
+                Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                None => String::new(),
+            };
+            why.replace("{keys}", &list)
+        })
+        .collect()
 }
 
 // --- Scenes for headless snapshots ---
@@ -1523,10 +1549,11 @@ pub const SCENES: &[Scene] = &[
     // Not asked for, but worth a look: a hotkey another app holds, and a file dragged over.
     ("hotkeys-failed", |s| {
         s.set_tab(Tab::Setup);
+        let taken = crate::why(&rune::ShortcutError::Conflict);
         s.hotkey_failures = vec![
-            (state::EFFECT_KEY.into(), "taken by another app".into()),
-            (state::sound_key(0), "taken by another app".into()),
-            (state::sound_key(1), "taken by another app".into()),
+            (state::EFFECT_KEY.into(), taken.clone()),
+            (state::sound_key(0), taken.clone()),
+            (state::sound_key(1), taken),
         ];
     }),
     ("drop", |s| s.drop_hover = true),
@@ -1553,14 +1580,23 @@ pub const SCENES: &[Scene] = &[
     ("find-offline", find_view::scenes::offline),
     ("youtube-install", find_view::scenes::youtube_install),
     ("trim", find_view::scenes::trim),
+    // Three files that didn't load, in the engine's words.
     ("load-error", |s| {
         s.add_sounds(
             ["Air horn.mp3", "Bruh.wav"]
                 .map(std::path::PathBuf::from)
                 .to_vec(),
         );
-        s.notice = Some(
-            "Couldn’t read Broken clip.mp3: it isn’t a supported audio file (and 2 more)".into(),
-        );
+        s.loaded((
+            Vec::new(),
+            vec![
+                "Warble can’t play “Broken clip.mp3”. It may be damaged, or renamed from another \
+                 kind of file. Try another copy."
+                    .into(),
+                "There’s no sound in “Silence.wav”. Try another file.".into(),
+                "Couldn’t find “Old take.flac”. If you moved it, add it again from its new folder."
+                    .into(),
+            ],
+        ));
     }),
 ];

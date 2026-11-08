@@ -294,7 +294,7 @@ impl State {
         if self.sim_no_cable {
             st.running = false;
             st.cable_name = None;
-            st.error = Some("VB-CABLE isn't installed".into());
+            st.error = Some("VB-CABLE isn’t installed".into());
         }
         self.meters.show(st.input_level, st.output_level);
         let old = &self.status;
@@ -530,7 +530,11 @@ impl State {
         tx.open_file(options, |s: &mut State, result, _| match result {
             Ok(Some(path)) => s.add_sounds(vec![path]),
             Ok(None) => {}
-            Err(e) => s.notice = Some(format!("Couldn't open the file picker: {e}")),
+            Err(e) => {
+                s.notice = Some(format!(
+                    "Couldn’t open the file picker: {e}. Drop your sound files on this window instead."
+                ))
+            }
         });
     }
 
@@ -554,7 +558,8 @@ impl State {
         }
     }
 
-    fn loaded(&mut self, (sounds, errors): (Vec<Sound>, Vec<String>)) {
+    /// Puts newly loaded sounds on the board, and says which files didn't load, one per line.
+    pub(crate) fn loaded(&mut self, (sounds, errors): (Vec<Sound>, Vec<String>)) {
         for sound in sounds {
             // A file already on the board (re-added from the sounds folder): keep one tile, or
             // removing either would delete the file the other still plays.
@@ -565,11 +570,8 @@ impl State {
             }
         }
         self.sounds.sort_by_key(|s| s.name.to_lowercase());
-        if let Some(first) = errors.first() {
-            self.notice = Some(match errors.len() {
-                1 => first.clone(),
-                n => format!("{first} (and {} more)", n - 1),
-            });
+        if !errors.is_empty() {
+            self.notice = Some(errors.join("\n"));
         }
     }
 
@@ -649,7 +651,11 @@ fn load_files(
             Some(dir) if src.parent() != Some(dir) => match settings::copy_in(&src, dir) {
                 Ok(p) => p,
                 Err(e) => {
-                    errors.push(format!("Couldn't copy {}: {e}", settings::sound_name(&src)));
+                    let name = src.file_name().unwrap_or_default().to_string_lossy();
+                    errors.push(format!(
+                        "Couldn’t copy “{name}” into Warble: {e}. Check the file is still there \
+                         and your PC has free space."
+                    ));
                     continue;
                 }
             },
