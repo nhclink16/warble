@@ -6,8 +6,8 @@
 
 use rune::tok::TextStyle;
 use rune::{
-    Align, Color, Cursor, Cx, Drag, El, Family, Icon, Phase, ScrollSpec, Shadow, Spring, TextCase,
-    Tx, col, el, icon, oklch, row, text,
+    Align, Color, Cursor, Cx, Drag, El, Family, Icon, LiveRegion, Phase, ScrollSpec, Shadow,
+    Spring, TextCase, Tx, col, el, icon, oklch, row, text,
 };
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
@@ -734,14 +734,21 @@ fn header(s: &State, k: &Kit) -> El {
 
 /// Running, a lit LED printed "Live": your mic is going into the call. A problem shows its
 /// icon on a key that takes you to Setup, where it's fixed; a device error is too long for
-/// it, so it says "Audio problem" and carries the rest.
+/// it, so it says "Audio problem" and carries the rest. On Setup it only names the problem:
+/// the line under the picker says the whole of it.
 fn status_pill(s: &State, k: &Kit) -> El {
     let (label, tone) = s.status_label();
     let error = s.status.error.as_deref().filter(|_| tone == "danger");
+    let key = tone != "live" && s.tab != Tab::Setup;
     let pill = row()
-        .key("status")
+        // Its own key on Setup, so focus on the pressed key moves on into the page.
+        .key(if s.tab == Tab::Setup {
+            "setup-status"
+        } else {
+            "status"
+        })
         .role("status")
-        .label(match error {
+        .label(match error.filter(|_| key) {
             Some(e) => format!("{label}: {e}"),
             None => label.to_string(),
         })
@@ -755,7 +762,7 @@ fn status_pill(s: &State, k: &Kit) -> El {
         .truncate()
         .shrink()
         .a11y_hidden();
-    let mut pill = match tone {
+    let pill = match tone {
         "live" => return pill.child(led_dot(true)).child(words),
         "warn" => pill.child(icon(&WARNING, ICON).color(warn())).child(words),
         "danger" => pill
@@ -765,21 +772,21 @@ fn status_pill(s: &State, k: &Kit) -> El {
             .child(led_dot(false))
             .child(words.color(k.c.text_muted)),
     };
-    if let Some(e) = error {
-        pill = pill.help(e);
+    if !key {
+        return pill;
     }
-    // A problem's pill is a key that takes you to where it's fixed.
-    if s.tab != Tab::Setup {
-        pill = raise(pill.px(9.0), Lamp::Off)
-            .radius(k.radius.md)
-            .help(error.unwrap_or("Open Setup"))
-            .focusable(true)
-            .cursor(Cursor::Pointer)
-            .hover(k.c.hover)
-            .press(k.c.pressed)
-            .on_press(|s: &mut State| s.set_tab(Tab::Setup));
-    }
-    pill
+    // A key that takes you to where the problem is fixed, still read out when it changes.
+    raise(pill.px(9.0), Lamp::Off)
+        .role("button")
+        .live_region(LiveRegion::Polite)
+        .radius(k.radius.md)
+        .help("Open Setup")
+        .focusable(true)
+        .focus_return("setup")
+        .cursor(Cursor::Pointer)
+        .hover(k.c.hover)
+        .press(k.c.pressed)
+        .on_press(|s: &mut State| s.set_tab(Tab::Setup))
 }
 
 fn tabs(s: &State, k: &Kit) -> El {

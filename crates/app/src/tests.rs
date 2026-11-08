@@ -85,6 +85,25 @@ fn tab_to(rt: &mut Runtime<State>, key: &str) {
     panic!("Tab never reaches {key}");
 }
 
+/// Every node a screen reader sees, flattened.
+fn a11y(rt: &Runtime<State>) -> Vec<serde_json::Value> {
+    fn walk(v: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+        out.push(v.clone());
+        for c in v["children"].as_array().into_iter().flatten() {
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&rt.accessibility_json(), &mut out);
+    out
+}
+
+/// The screen reader's node for the element keyed `key`.
+fn a11y_node(rt: &Runtime<State>, key: &str) -> serde_json::Value {
+    let node = a11y(rt).into_iter().find(|n| n["key"] == key);
+    node.unwrap_or_else(|| panic!("no node {key}"))
+}
+
 /// Runs frames until a page that just appeared has faded in and takes presses.
 fn settle(rt: &mut Runtime<State>) {
     for _ in 0..30 {
@@ -551,8 +570,28 @@ fn a_device_error_is_short_in_the_pill_and_whole_under_its_picker() {
         pill.label.as_deref(),
         Some(format!("Audio problem: {why}").as_str())
     );
+    // A key to Setup, read out when it changes, its tooltip saying where it goes.
+    assert_eq!(
+        (pill.role, pill.help.as_deref()),
+        ("button", Some("Open Setup"))
+    );
+    assert!(
+        a11y_node(&rt, "status")["states"]
+            .as_array()
+            .is_some_and(|s| s.contains(&"live-polite".into()))
+    );
     tap(&mut rt, "status");
     assert_eq!(rt.state.tab, Tab::Setup);
+    // On Setup it only names the problem; the line under the picker reads the whole of it.
+    let here = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("setup-status"))
+        .expect("the pill on Setup");
+    assert_eq!(
+        (here.role, here.label.as_deref(), here.help.as_deref()),
+        ("status", Some("Audio problem"), None)
+    );
     let error = rt
         .elements()
         .into_iter()
@@ -755,4 +794,16 @@ fn dismiss_and_undo_hand_focus_to_what_comes_next() {
         "{}",
         focus_path(&rt)
     );
+}
+
+#[test]
+fn the_pill_pressed_from_the_keyboard_hands_focus_to_setup() {
+    let mut rt = app();
+    let taken = crate::why(&rune::ShortcutError::Conflict);
+    rt.update(move |s, _| s.hotkey_failures = vec![(crate::state::STOP_KEY.into(), taken)]);
+    settle(&mut rt);
+    tab_to(&mut rt, "status");
+    press(&mut rt, Key::Text(" ".into()));
+    assert_eq!(rt.state.tab, Tab::Setup);
+    assert!(focus_path(&rt).contains("/setup/"), "{}", focus_path(&rt));
 }
