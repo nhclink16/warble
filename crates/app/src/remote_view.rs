@@ -1,6 +1,6 @@
 //! The Setup tab's Phone remote card: the switch, and while it's on, the QR code a phone scans.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use qrcodegen::{QrCode, QrCodeEcc};
 use rune::{Color, El, Tx, col, el, icon, oklch, row, text};
@@ -109,14 +109,24 @@ pub fn remote_card(s: &State, k: &Kit) -> El {
                             as_key(
                                 Button::new("Copy link")
                                     .help("Copies the link with its code. Warble clears it from the clipboard after 2 minutes.")
-                                    .on_press_tx(move |_: &mut State, tx: &mut Tx| {
+                                    .on_press_tx(move |s: &mut State, tx: &mut Tx| {
                                         tx.copy_secret(link.clone(), COPIED_FOR);
+                                        s.link_copied = Some(Instant::now());
                                     })
                                     .build(k),
                             )
                             .key("copy-link"),
                         ),
-                    ),
+                    )
+                    // For a few seconds after a copy: it worked, and for how long.
+                    .children(s.link_copied.map(|_| {
+                        text("Copied. Warble clears it in\u{a0}2\u{a0}minutes.")
+                            .key("copied")
+                            .role("status")
+                            .font(SMALL)
+                            .color(k.c.text_muted)
+                            .wrap()
+                    })),
             ),
     )
     .child(
@@ -247,6 +257,28 @@ mod tests {
             copied.as_deref(),
             Some("http://192.168.1.20:47823/#k=4f9c2a7e1b3d58c6a0e2f7419d8b3c65")
         );
+        // The card says it worked, read out as it appears, for a few seconds.
+        let line = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("copied"))
+            .expect("the Copied line");
+        assert_eq!(
+            (line.role, line.text.as_deref()),
+            (
+                "status",
+                Some("Copied. Warble clears it in\u{a0}2\u{a0}minutes.")
+            )
+        );
+        rt.state.link_copied = rt
+            .state
+            .link_copied
+            .map(|at| at - crate::state::COPIED_SHOWN);
+        rt.update(|s, tx| {
+            s.poll(1e6, tx);
+        });
+        settle(&mut rt);
+        assert!(rt.find("copied").is_none(), "then it goes");
         let qr = rt
             .elements()
             .into_iter()

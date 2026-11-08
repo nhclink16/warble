@@ -155,6 +155,8 @@ pub struct State {
     pub find: Find,
     pub trim: Option<Trim>,
     pub remote: Remote,
+    /// When the phone remote's link was copied, while the card says so.
+    pub link_copied: Option<Instant>,
     tray_shows: Option<(bool, Preset)>,
     save_due: Option<Instant>,
     last_poll: f64,
@@ -162,6 +164,8 @@ pub struct State {
 
 /// Status polls a second while the window shows.
 const POLL: f64 = 1.0 / 30.0;
+/// How long the phone remote's card says its link was copied.
+pub const COPIED_SHOWN: Duration = Duration::from_secs(3);
 const SAVE_DELAY: Duration = Duration::from_millis(400);
 
 impl State {
@@ -212,6 +216,7 @@ impl State {
             dialog_open: false,
             trim: None,
             remote: Remote::default(),
+            link_copied: None,
             tray_shows: None,
             save_due: None,
             last_poll: f64::NEG_INFINITY,
@@ -275,17 +280,21 @@ impl State {
                 tx.wake_after(due - now);
             }
         }
+        let copied_gone = self.link_copied.is_some_and(|at| now >= at + COPIED_SHOWN);
+        if copied_gone {
+            self.link_copied = None;
+        }
         if !self.headless && self.handle.as_ref().is_some_and(|h| !h.is_visible()) {
-            return false;
+            return copied_gone;
         }
         let since = t - self.last_poll;
         if since < POLL * 0.9 {
             tx.wake_after(Duration::from_secs_f64(POLL - since));
-            return false;
+            return copied_gone;
         }
         self.last_poll = t;
         tx.wake_after(Duration::from_secs_f64(POLL));
-        self.refresh_status()
+        self.refresh_status() || copied_gone
     }
 
     pub fn refresh_status(&mut self) -> bool {
