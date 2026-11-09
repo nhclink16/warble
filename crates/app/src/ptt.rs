@@ -4,8 +4,9 @@
 //! talk is on or a key is being chosen. It tells the engine first, so the mic opens within a
 //! read whatever the window is doing (hidden, or behind a game), then the window.
 //!
-//! Elsewhere no thread reads keys. Tests press and release the key with `State::key_held` and
-//! `State::key_pressed`, as the thread does.
+//! Elsewhere no thread reads keys. Tests run the thread's reads (`Keys::read`) on a made-up
+//! keyboard, and press and release the key with `State::key_held` and `State::key_pressed`, as
+//! the thread does.
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -22,6 +23,10 @@ pub const MIDDLE_MOUSE: Vk = 0x04;
 pub const MOUSE_4: Vk = 0x05;
 pub const MOUSE_5: Vk = 0x06;
 pub const ESCAPE: Vk = 0x1B;
+#[cfg(any(windows, test))]
+const LEFT_CTRL: Vk = 0xA2;
+#[cfg(any(windows, test))]
+const RIGHT_ALT: Vk = 0xA5;
 
 /// The name Warble shows for a key it takes, or `None` for one it doesn't: the left and right
 /// mouse buttons (they work the window), Escape (it cancels), the Windows keys, Pause (Windows
@@ -145,7 +150,9 @@ impl Reader {
             && let Some(handle) = handle
         {
             self.started = true;
-            let (shared, engine, handle) = (self.shared.clone(), engine.clone(), handle.clone());
+            // Only a weak hold on the engine, so quitting still drops it and closes the streams.
+            let (shared, engine) = (self.shared.clone(), Arc::downgrade(engine));
+            let handle = handle.clone();
             std::thread::spawn(move || windows::read(&shared, &engine, &handle));
         }
         #[cfg(not(windows))]
@@ -153,8 +160,139 @@ impl Reader {
     }
 }
 
+// Only Windows reads keys; tests read a made-up keyboard.
+
+/// What a read of the keys has for the engine and the window.
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Heard {
+    /// The push-to-talk key went down (true) or came up.
+    Talking(bool),
+    /// While a key is being chosen, this one was pressed (see [`State::key_pressed`]).
+    Pressed(Vk),
+}
+
+/// Shift, Ctrl and Alt by side, and the Windows keys.
+#[cfg(any(windows, test))]
+fn modifier(vk: Vk) -> bool {
+    matches!(vk, 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
+/// What the key reader keeps from one read to the next.
+#[cfg(any(windows, test))]
+struct Keys {
+    /// The watch the last read was for.
+    seen: Watch,
+    /// The push-to-talk key is down.
+    held: bool,
+    /// Which codes were down at the last read, while a key is being chosen.
+    was_down: [bool; 256],
+    /// A Shift, Ctrl or Alt pressed on its own while a key is being chosen.
+    alone: Option<Vk>,
+}
+
+#[cfg(any(windows, test))]
+impl Default for Keys {
+    fn default() -> Self {
+        Keys {
+            seen: Watch::Nothing,
+            held: false,
+            was_down: [false; 256],
+            alone: None,
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+impl Keys {
+    /// One read for `watch`, with `down` saying whether a code is down now: what changed since
+    /// the last read, if anything.
+    fn read(&mut self, watch: Watch, down: impl Fn(Vk) -> bool) -> Option<Heard> {
+        let mut heard = None;
+        if watch != self.seen {
+            self.seen = watch;
+            // A key held belonged to the last watch.
+            if self.held {
+                self.held = false;
+                heard = Some(Heard::Talking(false));
+            }
+            // A key already down as choosing starts (the Enter that pressed Change key)
+            // doesn't count.
+            if watch == Watch::Choosing {
+                self.alone = None;
+                for (vk, was) in self.was_down.iter_mut().enumerate() {
+                    *was = down(vk as Vk);
+                }
+            }
+        }
+        match watch {
+            Watch::Nothing => heard,
+            Watch::Key(vk) => {
+                let now = down(vk);
+                if now != self.held {
+                    self.held = now;
+                    heard = Some(Heard::Talking(now));
+                }
+                heard
+            }
+            Watch::Choosing => self.choose(down).map(Heard::Pressed).or(heard),
+        }
+    }
+
+    /// While a key is being chosen: the first one pressed that Warble takes, if any. A key
+    /// pressed with Shift, Ctrl, Alt or a Windows key held is a shortcut, not the key. Shift,
+    /// Ctrl and Alt count only on their own, once they come back up, so the Alt of Alt+Tab
+    /// isn't taken.
+    fn choose(&mut self, down: impl Fn(Vk) -> bool) -> Option<Vk> {
+        // With AltGr, Windows holds a Left Ctrl down beside Right Alt. That Ctrl wasn't pressed.
+        let down = |vk| down(vk) && !(vk == LEFT_CTRL && down(RIGHT_ALT));
+        let (mut pressed, mut lifted) = (Vec::new(), Vec::new());
+        for (vk, was) in self.was_down.iter_mut().enumerate() {
+            let (vk, now) = (vk as Vk, down(vk as Vk));
+            // The code for both Shifts (or Ctrls, or Alts) goes down with either one.
+            if now != *was && !matches!(vk, 0x10..=0x12) {
+                if now {
+                    pressed.push(vk);
+                } else {
+                    lifted.push(vk);
+                }
+            }
+            *was = now;
+        }
+        // So Right Alt going down or up flips Left Ctrl too: the Ctrl wasn't pressed or let go.
+        if pressed.contains(&RIGHT_ALT) || lifted.contains(&RIGHT_ALT) {
+            pressed.retain(|&vk| vk != LEFT_CTRL);
+            lifted.retain(|&vk| vk != LEFT_CTRL);
+        }
+        let modifiers: Vec<Vk> = (0..256)
+            .filter(|&m| modifier(m) && self.was_down[m as usize])
+            .collect();
+        match pressed[..] {
+            [] => {}
+            [vk] if pick(vk) != Pick::Skip && modifiers == [vk] => {
+                self.alone = Some(vk);
+                return None;
+            }
+            _ => self.alone = None,
+        }
+        let key = pressed.into_iter().find(|&vk| match pick(vk) {
+            Pick::Cancel => true,
+            Pick::Key(_) => modifiers.is_empty(),
+            Pick::Skip => false,
+        });
+        match self.alone {
+            Some(m) if key.is_none() && lifted.contains(&m) => {
+                self.alone = None;
+                Some(m)
+            }
+            _ => key,
+        }
+    }
+}
+
 #[cfg(windows)]
 mod windows {
+    use std::sync::Weak;
     use std::time::Duration;
 
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -171,52 +309,28 @@ mod windows {
     }
 
     /// Reads keys for as long as Warble runs, waiting while there's nothing to watch.
-    pub fn read(shared: &Shared, engine: &Engine, handle: &AppHandle<State>) {
-        let (mut seen, mut held) = (Watch::Nothing, false);
-        let mut was_down = [false; 256];
+    pub fn read(shared: &Shared, engine: &Weak<Engine>, handle: &AppHandle<State>) {
+        let mut keys = Keys::default();
         loop {
             let watch = *lock(&shared.watch);
-            if watch != seen {
-                seen = watch;
-                // A key held belonged to the last watch.
-                if held {
-                    held = false;
-                    engine.set_talking(false);
+            match keys.read(watch, down) {
+                Some(Heard::Talking(now)) => {
+                    // Warble has quit: there's nothing left to tell.
+                    let Some(engine) = engine.upgrade() else {
+                        return;
+                    };
+                    engine.set_talking(now);
+                    handle.update(move |s, _| s.key_held(now));
                 }
-                // A key already down as choosing starts (the Enter that pressed Change key)
-                // doesn't count.
-                if watch == Watch::Choosing {
-                    for (vk, was) in was_down.iter_mut().enumerate() {
-                        *was = down(vk as Vk);
-                    }
-                }
+                Some(Heard::Pressed(vk)) => handle.update(move |s, _| s.key_pressed(vk)),
+                None => {}
             }
-            match watch {
-                Watch::Nothing => {
-                    let idle = lock(&shared.watch);
-                    drop(shared.changed.wait_while(idle, |w| *w == Watch::Nothing));
-                    continue;
-                }
-                Watch::Key(vk) => {
-                    let now = down(vk);
-                    if now != held {
-                        held = now;
-                        engine.set_talking(now);
-                        handle.update(move |s, _| s.key_held(now));
-                    }
-                }
-                Watch::Choosing => {
-                    for (vk, was) in was_down.iter_mut().enumerate() {
-                        let vk = vk as Vk;
-                        let now = down(vk);
-                        if now && !*was && pick(vk) != Pick::Skip {
-                            handle.update(move |s, _| s.key_pressed(vk));
-                        }
-                        *was = now;
-                    }
-                }
+            if watch == Watch::Nothing {
+                let idle = lock(&shared.watch);
+                drop(shared.changed.wait_while(idle, |w| *w == Watch::Nothing));
+            } else {
+                std::thread::sleep(READ_EVERY);
             }
-            std::thread::sleep(READ_EVERY);
         }
     }
 }
@@ -248,5 +362,112 @@ mod tests {
             assert_eq!(pick(vk), Pick::Skip, "{vk:#x}");
         }
         assert_eq!(pick(ESCAPE), Pick::Cancel);
+    }
+
+    /// One read of a made-up keyboard on which `held` are down.
+    fn read(keys: &mut Keys, watch: Watch, held: &[Vk]) -> Option<Heard> {
+        keys.read(watch, |vk| held.contains(&vk))
+    }
+
+    #[test]
+    fn the_reader_tells_of_the_key_only_as_it_goes_down_or_up() {
+        let (mut keys, key) = (Keys::default(), Watch::Key(MOUSE_4));
+        assert_eq!(read(&mut keys, key, &[]), None);
+        assert_eq!(read(&mut keys, key, &[MOUSE_4]), Some(Heard::Talking(true)));
+        assert_eq!(read(&mut keys, key, &[MOUSE_4]), None, "still held");
+        assert_eq!(read(&mut keys, key, &[MOUSE_4, 0x56]), None, "other keys");
+        assert_eq!(read(&mut keys, key, &[]), Some(Heard::Talking(false)));
+
+        // A key held as the watch changes belonged to the last one: it's let go.
+        read(&mut keys, key, &[MOUSE_4]);
+        let other = Watch::Key(MOUSE_5);
+        assert_eq!(
+            read(&mut keys, other, &[MOUSE_4]),
+            Some(Heard::Talking(false))
+        );
+        assert_eq!(
+            read(&mut keys, other, &[MOUSE_5]),
+            Some(Heard::Talking(true))
+        );
+        for watch in [Watch::Nothing, Watch::Choosing] {
+            read(&mut keys, other, &[MOUSE_5]);
+            let heard = read(&mut keys, watch, &[MOUSE_5]);
+            assert_eq!(heard, Some(Heard::Talking(false)), "{watch:?}");
+            assert_eq!(read(&mut keys, watch, &[MOUSE_5]), None, "{watch:?}");
+            assert_eq!(read(&mut keys, watch, &[]), None, "{watch:?}");
+        }
+    }
+
+    #[test]
+    fn choosing_takes_the_first_key_pressed_once_it_starts() {
+        let mut keys = Keys::default();
+        let mut read = |held: &[Vk]| read(&mut keys, Watch::Choosing, held);
+        // The Enter that pressed Change key is down already: it doesn't count, nor its release.
+        assert_eq!(read(&[0x0D]), None);
+        assert_eq!(read(&[]), None);
+        assert_eq!(read(&[0x01]), None, "left click works the window");
+        let side = Some(Heard::Pressed(MOUSE_4));
+        assert_eq!(
+            read(&[0x01, MOUSE_4]),
+            side,
+            "a side button, as it goes down"
+        );
+        assert_eq!(read(&[MOUSE_4]), None, "once");
+        assert_eq!(read(&[]), None);
+        // Two in one read: the lower code, as Escape is here, which stops choosing.
+        assert_eq!(read(&[0x56, ESCAPE]), Some(Heard::Pressed(ESCAPE)));
+    }
+
+    #[test]
+    fn shift_ctrl_and_alt_count_only_pressed_on_their_own() {
+        let (shift, ctrl, alt) = ((0x10, 0xA0), (0x11, 0xA2), (0x12, 0xA4));
+        let mut keys = Keys::default();
+        let mut read = |held: &[Vk]| read(&mut keys, Watch::Choosing, held);
+        read(&[]);
+        // Alt+Tab, to another window: neither key is taken.
+        assert_eq!(
+            read(&[alt.0, alt.1]),
+            None,
+            "Alt waits to see what comes with it"
+        );
+        assert_eq!(
+            read(&[alt.0, alt.1, 0x09]),
+            None,
+            "Tab with Alt held is a shortcut"
+        );
+        assert_eq!(read(&[alt.0, alt.1]), None);
+        assert_eq!(read(&[]), None, "nor Alt, let go after Tab");
+        // Ctrl+Shift, and a Windows-key shortcut.
+        assert_eq!(read(&[ctrl.0, ctrl.1]), None);
+        assert_eq!(read(&[ctrl.0, ctrl.1, shift.0, shift.1]), None);
+        assert_eq!(read(&[]), None);
+        assert_eq!(read(&[0x5B]), None);
+        assert_eq!(read(&[0x5B, 0x44]), None, "Windows+D");
+        assert_eq!(read(&[]), None);
+        // Left Shift on its own is taken as it comes up.
+        assert_eq!(read(&[shift.0, shift.1]), None);
+        assert_eq!(read(&[]), Some(Heard::Pressed(shift.1)));
+    }
+
+    #[test]
+    fn altgr_is_taken_as_right_alt_not_the_left_ctrl_windows_sends_with_it() {
+        let (ctrl, alt) = ([0x11, LEFT_CTRL], [0x12, RIGHT_ALT]);
+        let both = [ctrl, alt].concat();
+        // Windows sends that Left Ctrl just before Right Alt: in the same read, or one before.
+        // Letting go, either may come up a read before the other.
+        for before in [false, true] {
+            for last in [&[][..], &ctrl, &alt] {
+                let case = format!("Ctrl a read before: {before}; left down: {last:x?}");
+                let mut keys = Keys::default();
+                let mut read = |held: &[Vk]| read(&mut keys, Watch::Choosing, held);
+                read(&[]);
+                if before {
+                    assert_eq!(read(&ctrl), None, "{case}");
+                }
+                assert_eq!(read(&both), None, "{case}");
+                let heard: Vec<_> = [read(last), read(&[])].into_iter().flatten().collect();
+                assert_eq!(heard, [Heard::Pressed(RIGHT_ALT)], "{case}");
+            }
+        }
     }
 }
