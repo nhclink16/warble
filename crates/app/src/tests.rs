@@ -1271,6 +1271,11 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
         "the mic stays open until there's a key"
     );
     assert!(talk_says(&rt).starts_with("Press the key you’ll hold to talk"));
+    assert_eq!(
+        a11y_node(&rt, "talk-key")["name"],
+        "Choose key",
+        "there's none yet"
+    );
     // Left and right click work the window, so they can't be the key.
     rt.update(|s, _| {
         s.key_pressed(0x01);
@@ -1294,7 +1299,14 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
     assert_eq!(rt.state.settings.talk_key, Some(ptt::MOUSE_4));
     assert!(rt.state.push_to_talk() && !rt.state.choosing_key);
     assert_eq!(a11y_node(&rt, "talk-key-caps")["name"], "Mouse 4");
-    assert!(talk_says(&rt).starts_with("In your game, set voice chat to open mic"));
+    // The line names the key taken, then what to set in Discord or the game.
+    let says = talk_says(&rt);
+    assert!(
+        says.starts_with("Hold Mouse 4 to talk. In Discord or your game, turn off push to talk"),
+        "{says}"
+    );
+    assert!(says.contains("run Warble as administrator too"), "{says}");
+    assert_eq!(a11y_node(&rt, "talk-key")["name"], "Change key");
 
     // Change key waits for the next key. Meanwhile keys go to the key reader, not the window:
     // Tab doesn't move on. Escape keeps the key there was.
@@ -1327,6 +1339,7 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
         rt.update(move |s, _| s.key_pressed(vk));
         settle(&mut rt);
         assert_eq!(a11y_node(&rt, "talk-key-caps")["name"], name);
+        assert!(talk_says(&rt).starts_with(&format!("Hold {name} to talk.")));
         assert!(focus_path(&rt).ends_with("/talk-key"), "{name}");
     }
     // Pressing Change key again stops waiting.

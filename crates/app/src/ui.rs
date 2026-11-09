@@ -1132,7 +1132,7 @@ fn meter_row(k: &Kit, label: &str, key: &str, segments: &[rune::Live<f32>]) -> E
 }
 
 /// Push to talk: its switch, and while it's on, the key with Change key, a Talking LED, and
-/// what to set in the game.
+/// what to set in Discord or the game.
 fn talk_card(s: &State, k: &Kit) -> El {
     let on = s.settings.push_to_talk;
     let title = row()
@@ -1171,7 +1171,8 @@ fn talk_card(s: &State, k: &Kit) -> El {
         return c;
     }
     let choosing = s.choosing_key;
-    let shown = match s.settings.talk_key.and_then(ptt::name) {
+    let key = s.settings.talk_key.and_then(ptt::name);
+    let shown = match &key {
         Some(name) if !choosing => Keybind::new(&[name]).build(k).key("talk-key-caps"),
         // The slot the key lands in, edged in ink while it waits, as a field with focus is. The
         // line under it says the same to a screen reader.
@@ -1192,21 +1193,29 @@ fn talk_card(s: &State, k: &Kit) -> El {
             ),
     };
     // Latched while it waits for a key; pressing it again stops waiting.
-    let change = Button::new("Change key")
-        .on_press_tx(|s: &mut State, tx: &mut Tx| {
-            s.change_key();
-            show_key_prompt(s, tx);
-        })
-        .build(k);
+    let change = Button::new(if key.is_some() {
+        "Change key"
+    } else {
+        "Choose key"
+    })
+    .on_press_tx(|s: &mut State, tx: &mut Tx| {
+        s.change_key();
+        show_key_prompt(s, tx);
+    })
+    .build(k);
     let change = if choosing {
         raise(change, Lamp::Latched).radius(k.radius.md)
     } else {
         as_key(change)
     };
-    let says = if choosing {
-        "Press the key you’ll hold to talk, or a side mouse button. Esc\u{a0}cancels."
-    } else {
-        "In your game, set voice chat to open mic, not push to talk. Sounds always go\u{a0}through."
+    // Once there's a key, the line names it, so a screen reader hears which was taken.
+    let says = match &key {
+        Some(name) if !choosing => format!(
+            "Hold {name} to talk. In Discord or your game, turn off push to talk and use Voice \
+             Activity or open mic. Sounds then go out without any key. If your game runs as \
+             administrator, run Warble as administrator too, or it can’t see your\u{a0}key."
+        ),
+        _ => "Press the key you’ll hold to talk, or a side mouse button. Esc\u{a0}cancels.".into(),
     };
     c.child(
         row()

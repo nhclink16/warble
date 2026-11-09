@@ -58,7 +58,8 @@ game's push-to-talk key as well.
 
 1. On the *Voice* tab, turn on *Push to talk*, then press the key or mouse button you want to hold.
    Side buttons (Mouse 4 and 5) and the middle button work. Left and right click don't.
-2. In the game's voice chat settings, choose **open mic**, not push to talk.
+2. In Discord or your game, turn off push to talk: choose **Voice Activity** in Discord, or **open mic**
+   in the game's voice chat settings.
 
 Your mic then goes into the call only while you hold the key, and for a moment after you let go so your
 last word isn't cut off. Sounds always go through. The *Talking* light on the *Voice* tab shows when your
@@ -66,7 +67,7 @@ mic is going out. *Change key* picks another key; *Esc* cancels.
 
 Warble only reads whether that one key is down, about 100 times a second, even while the window is
 hidden or a game has focus. It never presses, sends or intercepts a key, so the game gets every key as
-usual.
+usual. If your game runs as administrator, run Warble as administrator too, or it can't see your key.
 
 ## Phone remote
 
