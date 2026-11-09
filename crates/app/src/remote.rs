@@ -232,8 +232,9 @@ impl State {
         // lights: the chosen voice while it goes out, playing sounds while they reach the call.
         let (status, tone) = self.status_label();
         json!({
-            // Running, the pill keeps its lit LED beside a problem: the mic still goes out.
-            "status": {"label": status, "tone": tone, "running": self.status.running},
+            // While the mic goes out the pill's LED lights, beside a problem too. With push to
+            // talk that's only while its key is held.
+            "status": {"label": status, "tone": tone, "running": self.mic_live()},
             "effect": s.effect,
             "live": self.voice_live(),
             "cable": self.cable_open(),
@@ -674,6 +675,27 @@ mod tests {
         s.sim_error = None;
         s.sim_no_cable = true;
         assert_eq!(says(&mut s), [true, false, false], "no cable");
+    }
+
+    /// With push to talk on, the phone's LEDs light only while the key is held, as the
+    /// window's do.
+    #[test]
+    fn the_phone_lights_with_the_push_to_talk_key() {
+        let mut s = on();
+        let key = s.settings.remote_key.clone();
+        let lit = |s: &mut State| {
+            let (_, json, _) = s.api("GET", "/api/state", &key, b"");
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            [&json["live"], &json["status"]["running"]].map(|v| v.as_bool().unwrap())
+        };
+        assert_eq!(lit(&mut s), [true, true]);
+        s.settings.talk_key = Some(crate::ptt::MOUSE_4);
+        s.set_push_to_talk(true);
+        assert_eq!(lit(&mut s), [false, false], "the key is up");
+        s.key_held(true);
+        assert_eq!(lit(&mut s), [true, true], "held");
+        s.key_held(false);
+        assert_eq!(lit(&mut s), [false, false], "let go");
     }
 
     #[test]

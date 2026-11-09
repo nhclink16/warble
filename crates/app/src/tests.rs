@@ -6,6 +6,7 @@ use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use warble_engine::{Clip, Preset};
 
 use crate::find::YouTube;
+use crate::ptt;
 use crate::settings::HOLD_DIR;
 use crate::state::{REMOVAL_NEWS, REMOVE_SETTLE, State, Tab};
 use crate::ui;
@@ -675,7 +676,7 @@ fn is_led(c: rune::Color) -> bool {
     alpha > 0.05 && a.hypot(b) > 0.03 && (hue - 42.0).abs() < 15.0
 }
 
-/// What's lit by the LED below the header (whose Live dot is always lit while running).
+/// What's lit by the LED below the header (whose Live dot lights while the mic goes out).
 fn lit(rt: &Runtime<State>) -> Vec<String> {
     rt.elements()
         .into_iter()
@@ -1231,6 +1232,205 @@ fn pads_stay_inside_the_margins_at_the_smallest_window() {
         if pad {
             let right = e.rect[0] + e.rect[2];
             assert!(right <= 360.0 - 16.0 + 0.01, "{} ends at {right}", e.path);
+        }
+    }
+}
+
+/// What the line under the push-to-talk key says to a screen reader, as a status.
+fn talk_says(rt: &Runtime<State>) -> String {
+    let line = a11y_node(rt, "talk-says");
+    assert_eq!(line["role"], "status");
+    let says = if line["name"].is_string() {
+        &line["name"]
+    } else {
+        &line["value"]
+    };
+    says.as_str().unwrap_or_default().to_string()
+}
+
+#[test]
+fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
+    let space = || Key::Text(" ".into());
+    let mut rt = app();
+    assert!(
+        rt.find("talk-key").is_none(),
+        "off, it's a line and a switch"
+    );
+    let switch = a11y_node(&rt, "talk-switch");
+    assert_eq!(
+        (&switch["role"], &switch["name"]),
+        (&"switch".into(), &"Push to talk".into())
+    );
+
+    // On with no key yet: it waits for one straight away, and says so.
+    tab_to(&mut rt, "talk-switch");
+    press(&mut rt, space());
+    assert!(rt.state.settings.push_to_talk && rt.state.choosing_key);
+    assert!(
+        !rt.state.push_to_talk(),
+        "the mic stays open until there's a key"
+    );
+    assert!(talk_says(&rt).starts_with("Press the key you’ll hold to talk"));
+    // Left and right click work the window, so they can't be the key.
+    rt.update(|s, _| {
+        s.key_pressed(0x01);
+        s.key_pressed(0x02);
+    });
+    settle(&mut rt);
+    assert!(rt.state.choosing_key && rt.state.settings.talk_key.is_none());
+    // Escape gives up, and with no key push to talk goes back off.
+    press(&mut rt, Key::Escape);
+    assert!(!rt.state.choosing_key && !rt.state.settings.push_to_talk);
+    assert!(rt.find("talk-key").is_none());
+    assert!(
+        focus_path(&rt).ends_with("/talk-switch"),
+        "{}",
+        focus_path(&rt)
+    );
+
+    press(&mut rt, space());
+    rt.update(|s, _| s.key_pressed(ptt::MOUSE_4));
+    settle(&mut rt);
+    assert_eq!(rt.state.settings.talk_key, Some(ptt::MOUSE_4));
+    assert!(rt.state.push_to_talk() && !rt.state.choosing_key);
+    assert_eq!(a11y_node(&rt, "talk-key-caps")["name"], "Mouse 4");
+    assert!(talk_says(&rt).starts_with("In your game, set voice chat to open mic"));
+
+    // Change key waits for the next key. Meanwhile keys go to the key reader, not the window:
+    // Tab doesn't move on. Escape keeps the key there was.
+    tab_to(&mut rt, "talk-key");
+    press(&mut rt, space());
+    assert!(rt.state.choosing_key);
+    let states = &a11y_node(&rt, "talk-key")["states"];
+    assert!(
+        states.as_array().unwrap().contains(&"checked".into()),
+        "pressed in while it waits"
+    );
+    press(&mut rt, Key::Tab);
+    assert!(
+        focus_path(&rt).ends_with("/talk-key"),
+        "{}",
+        focus_path(&rt)
+    );
+    press(&mut rt, Key::Escape);
+    assert!(!rt.state.choosing_key && rt.state.push_to_talk());
+    assert_eq!(rt.state.settings.talk_key, Some(ptt::MOUSE_4));
+
+    // The other side button, the middle one and keys can be the key too.
+    for (vk, name) in [
+        (ptt::MOUSE_5, "Mouse 5"),
+        (ptt::MIDDLE_MOUSE, "Middle mouse"),
+        (0x14, "Caps Lock"),
+        (0x56, "V"),
+    ] {
+        press(&mut rt, space());
+        rt.update(move |s, _| s.key_pressed(vk));
+        settle(&mut rt);
+        assert_eq!(a11y_node(&rt, "talk-key-caps")["name"], name);
+        assert!(focus_path(&rt).ends_with("/talk-key"), "{name}");
+    }
+    // Pressing Change key again stops waiting.
+    tap(&mut rt, "talk-key");
+    assert!(rt.state.choosing_key);
+    tap(&mut rt, "talk-key");
+    assert!(!rt.state.choosing_key);
+    assert_eq!(rt.state.settings.talk_key, Some(0x56));
+}
+
+#[test]
+fn with_push_to_talk_only_the_held_key_sends_and_lights_the_voice() {
+    // The header's Live LED, and how loud the mock engine's output is over a second of polls.
+    let live_leds = |rt: &Runtime<State>| {
+        let pill = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.path.contains("/status/"));
+        pill.filter(|e| is_led(e.fill)).count()
+    };
+    let out = |rt: &Runtime<State>| {
+        (0..30)
+            .map(|_| rt.state.engine.status().output_level)
+            .fold(0.0, f32::max)
+    };
+    let mut rt = app();
+    scene(&mut rt, "ptt");
+    assert!(rt.state.push_to_talk() && !rt.state.mic_live() && !rt.state.voice_live());
+    assert_eq!(
+        lit(&rt),
+        Vec::<String>::new(),
+        "the key is up: nothing goes out"
+    );
+    assert_eq!(live_leds(&rt), 0);
+    let led = a11y_node(&rt, "talking");
+    assert_eq!(
+        (&led["role"], &led["name"]),
+        (&"status".into(), &"Not talking".into())
+    );
+    assert!(
+        led["states"].is_null(),
+        "read where it is, not announced at each press"
+    );
+    assert_eq!(out(&rt), 0.0, "the engine keeps the mic out of the call");
+
+    rt.update(|s, _| s.key_held(true));
+    settle(&mut rt);
+    assert!(rt.state.voice_live());
+    let on = lit(&rt);
+    let (voice, talking) = (
+        |p: &String| p.contains("/preset-deep"),
+        |p: &String| p.contains("/talking"),
+    );
+    assert!(on.iter().any(voice) && on.iter().any(talking), "{on:?}");
+    assert!(on.iter().all(|p| voice(p) || talking(p)), "{on:?}");
+    assert_eq!(live_leds(&rt), 1);
+    assert_eq!(a11y_node(&rt, "talking")["name"], "Talking");
+    assert!(out(&rt) > 0.1, "the voice goes out while it's held");
+
+    rt.update(|s, _| s.key_held(false));
+    settle(&mut rt);
+    assert!(!rt.state.voice_live() && lit(&rt).is_empty());
+
+    // Held, but with no cable nothing reaches a call: the Talking LED stays dark too.
+    scene(&mut rt, "no-cable");
+    rt.update(|s, _| {
+        s.set_tab(Tab::Voice);
+        s.key_held(true);
+    });
+    settle(&mut rt);
+    assert!(rt.state.talking && !rt.state.mic_live());
+    assert_eq!(lit(&rt), Vec::<String>::new());
+
+    // Off again, the mic goes straight out and there's no Talking LED.
+    let mut rt = app();
+    scene(&mut rt, "ptt");
+    rt.update(|s, _| s.set_push_to_talk(false));
+    settle(&mut rt);
+    assert!(rt.state.voice_live() && rt.find("talking").is_none());
+    assert!(out(&rt) > 0.1);
+}
+
+#[test]
+fn push_to_talk_fits_inside_the_margins() {
+    for size in [(360.0, 540.0), (400.0, 620.0)] {
+        for name in ["ptt", "ptt-talking", "ptt-choose"] {
+            let mut rt = Runtime::new(State::mock(), ui::view, size, Env::new(true, 1.0));
+            scene(&mut rt, name);
+            let section = rt
+                .elements()
+                .into_iter()
+                .filter(|e| e.path.contains("/talk/"));
+            let mut seen = 0;
+            for e in section {
+                seen += 1;
+                let (left, right) = (e.rect[0], e.rect[0] + e.rect[2]);
+                let inside = left >= 16.0 - 0.01 && right <= size.0 - 16.0 + 0.01;
+                assert!(
+                    inside,
+                    "{name} at {size:?}: {} spans {left}..{right}",
+                    e.path
+                );
+            }
+            assert!(seen > 5, "{name}");
         }
     }
 }

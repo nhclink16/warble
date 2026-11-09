@@ -10,6 +10,7 @@ use rune::{AppHandle, FileDialogOptions, Live, PointerPress, Tx};
 use warble_engine::{Devices, Engine, Preset, SoundId, Status};
 
 use crate::find::Find;
+use crate::ptt::{self, Pick, Vk, Watch};
 use crate::remote::Remote;
 use crate::settings::{self, AUDIO_EXTS, Settings};
 use crate::trim::Trim;
@@ -161,6 +162,11 @@ pub struct State {
     pub remote: Remote,
     /// When the phone remote's link was copied, while the card says so.
     pub link_copied: Option<Instant>,
+    /// The push-to-talk key is down (the key reader says so).
+    pub talking: bool,
+    /// Waiting for the key or mouse button push to talk will use.
+    pub choosing_key: bool,
+    pub ptt: ptt::Reader,
     tray_shows: Option<(bool, Preset)>,
     save_due: Option<Instant>,
     last_poll: f64,
@@ -194,6 +200,7 @@ impl State {
         engine.set_monitor_volume(settings.monitor_volume);
         engine.set_sound_volume(settings.sound_volume);
         engine.set_hear_sounds(settings.hear_sounds);
+        engine.set_push_to_talk(settings.push_to_talk && settings.talk_key.is_some());
         State {
             find: Find::new(&settings.freesound_key),
             status: engine.status(),
@@ -221,6 +228,9 @@ impl State {
             trim: None,
             remote: Remote::default(),
             link_copied: None,
+            talking: false,
+            choosing_key: false,
+            ptt: ptt::Reader::default(),
             tray_shows: None,
             save_due: None,
             last_poll: f64::NEG_INFINITY,
@@ -351,11 +361,16 @@ impl State {
         }
     }
 
-    /// The changed voice is going into the call: the effect is on and the mic → cable path
-    /// runs. Only then do the footswitch and the chosen voice light, in the window and on
-    /// the phone.
+    /// Your mic is going into the call: the mic → cable path runs, and push to talk is off or
+    /// its key is held. Only then does the Live LED light, in the window and on the phone.
+    pub fn mic_live(&self) -> bool {
+        self.status.running && (!self.push_to_talk() || self.talking)
+    }
+
+    /// The changed voice is going into the call: the effect is on and the mic goes out. Only
+    /// then do the footswitch and the chosen voice light, in the window and on the phone.
     pub fn voice_live(&self) -> bool {
-        self.settings.effect && self.status.running
+        self.settings.effect && self.mic_live()
     }
 
     /// VB-CABLE is open, so a playing sound reaches the call; only then do a playing pad and
@@ -374,6 +389,9 @@ impl State {
     pub fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
         self.open_picker = None;
+        if tab != Tab::Voice {
+            self.stop_choosing_key();
+        }
         if tab != Tab::Soundboard && self.status.preview.is_some() {
             self.stop_preview();
         }
@@ -414,6 +432,87 @@ impl State {
         self.settings.monitor_volume = volume.clamp(0.0, 1.0);
         self.engine.set_monitor_volume(self.settings.monitor_volume);
         self.changed();
+    }
+
+    // --- Push to talk ---
+
+    /// Push to talk is on and has a key: the mic goes out only while it's held.
+    pub fn push_to_talk(&self) -> bool {
+        self.settings.push_to_talk && self.settings.talk_key.is_some()
+    }
+
+    pub fn set_push_to_talk(&mut self, on: bool) {
+        self.settings.push_to_talk = on;
+        // With no key yet, turning it on goes straight to choosing one.
+        self.choosing_key = on && self.settings.talk_key.is_none();
+        self.sync_ptt();
+        self.changed();
+    }
+
+    /// Change key: wait for the next key or mouse button. Pressing it again stops waiting.
+    pub fn change_key(&mut self) {
+        if self.choosing_key {
+            self.stop_choosing_key();
+        } else {
+            self.choosing_key = true;
+            self.sync_ptt();
+        }
+    }
+
+    /// Stops waiting for a key. With none chosen yet, push to talk goes back off: it needs one.
+    pub fn stop_choosing_key(&mut self) {
+        if !self.choosing_key {
+            return;
+        }
+        self.choosing_key = false;
+        if self.settings.talk_key.is_none() {
+            self.settings.push_to_talk = false;
+            self.changed();
+        }
+        self.sync_ptt();
+    }
+
+    /// A key or mouse button went down while one is being chosen: from the key reader, or a
+    /// test. The first that Warble takes becomes the key; Escape stops choosing.
+    #[cfg_attr(not(windows), allow(dead_code))] // only Windows reads keys
+    pub fn key_pressed(&mut self, vk: Vk) {
+        if !self.choosing_key {
+            return;
+        }
+        match ptt::pick(vk) {
+            Pick::Key(vk) => {
+                self.settings.talk_key = Some(vk);
+                self.choosing_key = false;
+                self.sync_ptt();
+                self.changed();
+            }
+            Pick::Cancel => self.stop_choosing_key(),
+            Pick::Skip => {}
+        }
+    }
+
+    /// The push-to-talk key went down or up: from the key reader, which has told the engine
+    /// already, or a test.
+    pub fn key_held(&mut self, down: bool) {
+        // Word about a key no longer watched comes too late to count.
+        self.talking = down && matches!(self.ptt.watch(), Watch::Key(_));
+        self.engine.set_talking(self.talking);
+    }
+
+    /// Tells the engine and the key reader what push to talk needs now.
+    pub fn sync_ptt(&mut self) {
+        let watch = match (self.choosing_key, self.settings.push_to_talk) {
+            (true, _) => Watch::Choosing,
+            (false, true) => self.settings.talk_key.map_or(Watch::Nothing, Watch::Key),
+            (false, false) => Watch::Nothing,
+        };
+        if !matches!(watch, Watch::Key(_)) {
+            self.talking = false;
+            self.engine.set_talking(false);
+        }
+        self.engine.set_push_to_talk(self.push_to_talk());
+        let handle = self.handle.as_ref().filter(|_| !self.headless);
+        self.ptt.set(watch, &self.engine, handle);
     }
 
     pub fn set_device(&mut self, picker: Picker, name: Option<String>) {

@@ -6,8 +6,8 @@
 
 use rune::tok::TextStyle;
 use rune::{
-    Align, Color, Cursor, Cx, Drag, El, Family, Icon, LiveRegion, Phase, ScrollSpec, Shadow,
-    Spring, TextCase, Tx, col, el, icon, oklch, row, text,
+    Align, Color, Cursor, Cx, Drag, El, Family, Icon, Key, KeyEvent, LiveRegion, Phase, ScrollSpec,
+    Shadow, Spring, TextCase, Tx, col, el, icon, oklch, row, text,
 };
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Keybind, Kit, MenuItem,
@@ -16,6 +16,7 @@ use rune_kit::{
 use warble_engine::{DeviceInfo, Preset};
 
 use crate::find_view;
+use crate::ptt;
 use crate::remote_view;
 use crate::settings::DROP_EXTS;
 use crate::state::{self, Picker, REMOVAL_NEWS, Removed, SEGMENTS, Sound, State, Tab};
@@ -697,11 +698,24 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .child(body)
         .on_drop_files(|s: &mut State, files, _| s.add_sounds(files.to_vec()))
         .accepts_extensions(&DROP_EXTS)
-        .on_drop_hover(|s: &mut State, over, _| s.drop_hover = over);
+        .on_drop_hover(|s: &mut State, over, _| s.drop_hover = over)
+        .on_key(while_choosing_a_key);
     if s.drop_hover {
         root = root.child(drop_overlay(&k));
     }
     rune_kit::root(root, layer)
+}
+
+/// While a push-to-talk key is being chosen, the key reader takes every key, so none works
+/// the window too (Space doesn't press a button, Tab doesn't move on). Escape stops choosing.
+pub fn while_choosing_a_key(s: &mut State, ev: &KeyEvent, _: &mut Tx) -> bool {
+    if !s.choosing_key {
+        return false;
+    }
+    if ev.key == Key::Escape {
+        s.stop_choosing_key();
+    }
+    true
 }
 
 /// A tab's content in a scroll view, for windows shorter than it.
@@ -744,11 +758,11 @@ fn header(s: &State, k: &Kit) -> El {
         .child(status_pill(s, k))
 }
 
-/// Running, a lit LED printed "Live": your mic is going into the call. A problem shows its
-/// icon on a key that takes you to Setup, where it's fixed, with the LED still lit beside it
-/// while the mic goes out (hotkeys blocked, say). A device error is too long for the key, so
-/// it says "Audio problem" and carries the rest. On Setup it only names the problem: the line
-/// under the picker says the whole of it.
+/// Running, an LED printed "Live", lit while your mic is going into the call (with push to
+/// talk, while its key is held). A problem shows its icon on a key that takes you to Setup,
+/// where it's fixed, with the LED still lit beside it while the mic goes out (hotkeys blocked,
+/// say). A device error is too long for the key, so it says "Audio problem" and carries the
+/// rest. On Setup it only names the problem: the line under the picker says the whole of it.
 fn status_pill(s: &State, k: &Kit) -> El {
     let (label, tone) = s.status_label();
     let error = s.status.error.as_deref().filter(|_| tone == "danger");
@@ -775,9 +789,9 @@ fn status_pill(s: &State, k: &Kit) -> El {
         .truncate()
         .shrink()
         .a11y_hidden();
-    let live = s.status.running.then(|| led_dot(true));
+    let live = s.mic_live().then(|| led_dot(true));
     let pill = match tone {
-        "live" => return pill.children(live).child(words),
+        "live" => return pill.child(led_dot(s.mic_live())).child(words),
         "warn" => pill
             .children(live)
             .child(icon(&WARNING, ICON).color(warn()))
@@ -848,6 +862,7 @@ fn voice(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
         .child(effect_card(s, k))
         .child(preset_grid(s, k))
         .child(levels_card(s, cx, k))
+        .child(talk_card(s, k))
         .child(monitor_card(s, cx, k))
 }
 
@@ -1106,6 +1121,115 @@ fn meter_row(k: &Kit, label: &str, key: &str, segments: &[rune::Live<f32>]) -> E
         .child(printed(k, label).w(LABEL_W))
         .child(bar)
         .child(el().w(40.0))
+}
+
+/// Push to talk: its switch, and while it's on, the key with Change key, a Talking LED, and
+/// what to set in the game.
+fn talk_card(s: &State, k: &Kit) -> El {
+    let on = s.settings.push_to_talk;
+    let title = row()
+        .gap(10.0)
+        .center_y()
+        // The switch says it to a screen reader.
+        .child(printed(k, "Push to talk").a11y_hidden())
+        .children(s.push_to_talk().then(|| talking_led(k, s.mic_live())));
+    let c = group(k).key("talk").child(
+        row()
+            .w_full()
+            .gap(10.0)
+            .center_y()
+            .child(
+                col().grow(1.0).shrink().gap(6.0).child(title).child(
+                    text("Hold a key to talk")
+                        .font(LABEL)
+                        .color(k.c.text_base)
+                        .wrap(),
+                ),
+            )
+            .child(
+                Switch::new(on)
+                    .label("Push to talk")
+                    .hide_label()
+                    .control_size(ControlSize::Small)
+                    .on_toggle(|s: &mut State| s.set_push_to_talk(!s.settings.push_to_talk))
+                    .build(k)
+                    .key("talk-switch"),
+            ),
+    );
+    if !on {
+        return c;
+    }
+    let choosing = s.choosing_key;
+    let shown = match s.settings.talk_key.and_then(ptt::name) {
+        Some(name) if !choosing => Keybind::new(&[name]).build(k).key("talk-key-caps"),
+        // The slot the key lands in, edged in ink while it waits, as a field with focus is. The
+        // line under it says the same to a screen reader.
+        _ => row()
+            .h(24.0)
+            .px(8.0)
+            .shrink()
+            .center_y()
+            .radius(k.radius.sm)
+            .fill(recess())
+            .border(1.0, k.c.border_focus)
+            .a11y_hidden()
+            .child(
+                text("Press a key…")
+                    .font(LABEL)
+                    .color(k.c.text_base)
+                    .truncate(),
+            ),
+    };
+    // Latched while it waits for a key; pressing it again stops waiting.
+    let change = Button::new("Change key")
+        .on_press(State::change_key)
+        .build(k);
+    let change = if choosing {
+        raise(change, Lamp::Latched).radius(k.radius.md)
+    } else {
+        as_key(change)
+    };
+    let says = if choosing {
+        "Press the key you’ll hold to talk, or a side mouse button. Esc\u{a0}cancels."
+    } else {
+        "In your game, set voice chat to open mic, not push to talk. Sounds always go\u{a0}through."
+    };
+    c.child(
+        row()
+            .w_full()
+            .min_h(28.0)
+            .gap(GAP)
+            .center_y()
+            .child(printed(k, "Key").w(LABEL_W))
+            .child(row().grow(1.0).shrink().center_y().child(shown))
+            .child(change.key("talk-key").checked(choosing)),
+    )
+    .child(
+        text(says)
+            .key("talk-says")
+            .role("status")
+            .font(SMALL)
+            .color(k.c.text_muted)
+            .wrap(),
+    )
+}
+
+/// A small LED printed "Talking": lit while the push-to-talk key sends your mic into the call.
+/// A screen reader can read it, but isn't told each time it flickers.
+fn talking_led(k: &Kit, lit: bool) -> El {
+    row()
+        .key("talking")
+        .role("status")
+        .live_region(LiveRegion::Off)
+        .label(if lit { "Talking" } else { "Not talking" })
+        .gap(6.0)
+        .center_y()
+        .child(led_dot(lit))
+        .child(
+            printed(k, "Talking")
+                .color(if lit { k.c.text_base } else { k.c.text_faint })
+                .a11y_hidden(),
+        )
 }
 
 fn monitor_card(s: &State, cx: &mut Cx<State>, k: &Kit) -> El {
@@ -2117,6 +2241,13 @@ pub(crate) fn hotkey_problems(s: &State, chords: Option<&[String]>) -> Vec<Strin
 
 // --- Scenes for headless snapshots ---
 
+fn ptt_scene(s: &mut State, held: bool) {
+    s.select_preset(Preset::Deep);
+    s.settings.talk_key = Some(ptt::MOUSE_4);
+    s.set_push_to_talk(true);
+    s.key_held(held);
+}
+
 type Scene = (&'static str, fn(&mut State));
 
 pub const SCENES: &[Scene] = &[
@@ -2148,6 +2279,11 @@ pub const SCENES: &[Scene] = &[
             s.play(id);
         }
     }),
+    // Push to talk on with Mouse 4: the key up (nothing goes out, so nothing lights), then held.
+    ("ptt", |s| ptt_scene(s, false)),
+    ("ptt-talking", |s| ptt_scene(s, true)),
+    // Turned on for the first time: it waits for a key straight away.
+    ("ptt-choose", |s| s.set_push_to_talk(true)),
     ("soundboard-empty", |s| s.set_tab(Tab::Soundboard)),
     ("setup", |s| s.set_tab(Tab::Setup)),
     ("no-cable", |s| {

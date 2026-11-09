@@ -103,17 +103,17 @@ header { display: flex; align-items: center; gap: 9px; height: 40px; }
 .logo { width: 24px; height: 24px; display: grid; place-items: center; flex: none; color: var(--ink); }
 .logo svg { width: 24px; height: 24px; }
 h1 { flex: 1; font-size: 17px; font-weight: 650; letter-spacing: -0.005em; }
-/* The status, printed on the body like the window's: a lit LED for Live, an unlit one while
-   it's getting going, and a warning triangle for a problem, still beside the lit LED while
-   the mic goes out. */
+/* The status, printed on the body like the window's: an LED for Live, lit while the mic goes
+   out (with push to talk, while its key is held), and a warning triangle for a problem, still
+   beside the lit LED while the mic goes out. */
 /* It takes the room the name leaves, and only past that do its words end in "…". */
 .pill { display: flex; align-items: center; gap: 9px; height: 28px; min-width: 0; padding: 0 2px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); flex: none; }
 .pill svg { display: none; width: 16px; height: 16px; flex: none; }
 .pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .pill.muted span { color: var(--muted); }
-/* Live: your mic is going into the call. */
-.pill.live::before, .pill.running::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
+/* Lit while your mic is going into the call. */
+.pill.running::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
 .pill.warn:not(.running)::before, .pill.danger:not(.running)::before { display: none; }
 .pill.warn svg, .pill.danger svg { display: block; }
 .pill.warn svg { color: var(--warn); }

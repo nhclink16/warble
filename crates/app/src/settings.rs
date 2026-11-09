@@ -35,6 +35,11 @@ pub struct Settings {
     pub remote: bool,
     /// The secret in the remote's link (32 hex digits). A new one signs every phone out.
     pub remote_key: String,
+    /// Push to talk: the mic goes into the call only while `talk_key` is held. Off until it's
+    /// turned on, on the Voice tab.
+    pub push_to_talk: bool,
+    /// The push-to-talk key or mouse button, as a Windows virtual-key code (see `ptt`).
+    pub talk_key: Option<u16>,
 }
 
 impl Default for Settings {
@@ -53,6 +58,8 @@ impl Default for Settings {
             freesound_key: String::new(),
             remote: false,
             remote_key: String::new(),
+            push_to_talk: false,
+            talk_key: None,
         }
     }
 }
@@ -79,6 +86,9 @@ impl Settings {
         s.mic_gain = s.mic_gain.clamp(0.25, 4.0);
         s.monitor_volume = s.monitor_volume.clamp(0.0, 1.0);
         s.sound_volume = s.sound_volume.clamp(0.0, 1.0);
+        // A key Warble doesn't take is no key, and push to talk needs one.
+        s.talk_key = s.talk_key.filter(|&vk| crate::ptt::name(vk).is_some());
+        s.push_to_talk &= s.talk_key.is_some();
         s
     }
 
@@ -237,6 +247,8 @@ mod tests {
             preset: Preset::Chipmunk.id().into(),
             mic_gain: 2.0,
             cable: Some("CABLE".into()),
+            push_to_talk: true,
+            talk_key: Some(crate::ptt::MOUSE_4),
             ..Default::default()
         };
         s.save(&dir).unwrap();
@@ -251,6 +263,15 @@ mod tests {
             (s.preset(), s.mic_gain, s.effect),
             (Preset::Normal, 4.0, true)
         );
+        assert_eq!((s.push_to_talk, s.talk_key), (false, None), "an older file");
+        // The left mouse button can't be the key, so push to talk stays off.
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"push_to_talk": true, "talk_key": 1}"#,
+        )
+        .unwrap();
+        let s = Settings::load(&dir);
+        assert_eq!((s.push_to_talk, s.talk_key), (false, None));
     }
 
     #[test]

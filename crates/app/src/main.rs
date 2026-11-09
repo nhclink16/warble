@@ -8,6 +8,7 @@ mod find;
 mod find_view;
 mod icon;
 mod library;
+mod ptt;
 mod remote;
 mod remote_view;
 mod settings;
@@ -29,8 +30,11 @@ fn main() {
         scenes: ui::SCENES,
         fonts: ui::FONTS,
         poll: Some(State::poll),
-        // Escape leaves Find sounds or Trim even when nothing on the page has focus.
-        on_key: Some(find_view::escape_goes_back),
+        // While a push-to-talk key is being chosen, keys go to that; otherwise Escape leaves
+        // Find sounds or Trim even when nothing on the page has focus.
+        on_key: Some(|s, ev, tx| {
+            ui::while_choosing_a_key(s, ev, tx) || find_view::escape_goes_back(s, ev, tx)
+        }),
         ..AppSpec::new("Warble", (400.0, 620.0), State::mock, ui::view)
     });
     let handle = app.handle();
@@ -58,6 +62,7 @@ fn main() {
             s.sync_tray();
             s.load_saved_sounds();
             s.sync_remote();
+            s.sync_ptt();
             s
         })
         .keep_running()

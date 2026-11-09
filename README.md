@@ -14,6 +14,8 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
   and lets it update itself once a day after that.
 - **Trim:** any tile's scissors button, or a search result's, opens the same trim editor. So does dropping a
   video file (MP4, MOV, M4V) or an M4A on the window.
+- **Push to talk:** your mic goes into the call only while you hold a key or mouse button you choose,
+  and sounds always go through. See [Push to talk](#push-to-talk).
 - **Hear yourself:** listen to your changed voice in your headphones.
 - **Hear sounds:** soundboard sounds play in your headphones too (on by default; switch it off on the *Soundboard* tab).
 - **Phone remote:** play sounds, change your voice and set the volumes from your phone's browser.
@@ -48,6 +50,23 @@ Warble picks up your normal mic and VB-CABLE by itself. You can change either on
 | Ctrl+Alt+S | Stop all sounds |
 
 If another app already uses one of these keys, the *Setup* tab says so.
+
+## Push to talk
+
+With Warble's own push-to-talk key, a sound from the board plays in game chat without you holding the
+game's push-to-talk key as well.
+
+1. On the *Voice* tab, turn on *Push to talk*, then press the key or mouse button you want to hold.
+   Side buttons (Mouse 4 and 5) and the middle button work. Left and right click don't.
+2. In the game's voice chat settings, choose **open mic**, not push to talk.
+
+Your mic then goes into the call only while you hold the key, and for a moment after you let go so your
+last word isn't cut off. Sounds always go through. The *Talking* light on the *Voice* tab shows when your
+mic is going out. *Change key* picks another key; *Esc* cancels.
+
+Warble only reads whether that one key is down, about 100 times a second, even while the window is
+hidden or a game has focus. It never presses, sends or intercepts a key, so the game gets every key as
+usual.
 
 ## Phone remote
 
@@ -88,7 +107,9 @@ WARBLE_MOCK=1 cargo run -p warble -- --snap snaps/voice.png --scene voice   # he
 
 Scenes (`--list-scenes` prints them):
 
-- Voice: `voice` (the effect on), `voice-off`.
+- Voice: `voice` (the effect on), `voice-off`, `ptt` (push to talk on, its key up), `ptt-talking` (the key
+  held), `ptt-choose` (just turned on, waiting for a key). Push to talk is below the fold at 400x620; add
+  `--size 400x1000` to see it.
 - Soundboard: `soundboard` (one sound playing), `soundboard-empty` (nine empty sockets), `removed` (just after
   removing a sound, with Undo), `undo-failed` (an Undo that couldn't put the file back, the Undo still under it),
   `load-error` (three files that didn't load), `drop` (files dragged over the window).

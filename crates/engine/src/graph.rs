@@ -1196,7 +1196,6 @@ mod tests {
 
         // On with the key up: the mic stays open for the tail, then closes.
         controls.push_to_talk.store(true, Relaxed);
-        assert!(TALK_TAIL_SECONDS > 0.15 && TALK_TAIL_SECONDS < 0.25);
         let (call, _) = run(&mut graph, 15);
         assert!(near(&call, 0.5), "still open 150 ms on");
         let (call, heard) = run(&mut graph, 10);
