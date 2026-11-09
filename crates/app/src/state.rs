@@ -52,6 +52,10 @@ pub struct Removed {
 /// remove the tile that slides into its place.
 pub const REMOVE_SETTLE: Duration = Duration::from_millis(500);
 
+/// A screen reader hears "Removed …" only while the removal is this new. The Undo row leaves
+/// with the Soundboard and is added again on the way back, quietly after this.
+pub const REMOVAL_NEWS: Duration = Duration::from_secs(3);
+
 /// Lit and unlit segments in each level meter.
 pub const SEGMENTS: usize = 28;
 pub const SEGMENT_OFF: f32 = 0.13;

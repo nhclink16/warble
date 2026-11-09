@@ -7,7 +7,7 @@ use warble_engine::{Clip, Preset};
 
 use crate::find::YouTube;
 use crate::settings::HOLD_DIR;
-use crate::state::{REMOVE_SETTLE, State, Tab};
+use crate::state::{REMOVAL_NEWS, REMOVE_SETTLE, State, Tab};
 use crate::ui;
 
 fn app() -> Runtime<State> {
@@ -880,6 +880,31 @@ fn a_notice_shows_once_above_whichever_page_shows() {
     settle(&mut rt);
     assert!(shows(&rt), "Trim");
     assert!(rt.state.removed.is_some(), "still there to undo");
+}
+
+#[test]
+fn a_removal_is_read_out_when_new_not_on_each_return_to_the_board() {
+    let live = |rt: &Runtime<State>| {
+        let row = a11y_node(rt, "removed");
+        assert_eq!(row["name"], "Removed “Bruh”. Undo is next to it.");
+        row["states"]
+            .as_array()
+            .is_some_and(|s| s.contains(&"live-polite".into()))
+    };
+    let mut rt = app();
+    scene(&mut rt, "removed");
+    assert!(live(&rt), "read out as it happens");
+
+    rt.state.removed.as_mut().unwrap().at -= REMOVAL_NEWS;
+    rt.update(|s, _| s.set_tab(Tab::Voice));
+    settle(&mut rt);
+    assert!(rt.find("removed").is_none());
+    rt.update(|s, _| s.set_tab(Tab::Soundboard));
+    settle(&mut rt);
+    assert!(
+        !live(&rt),
+        "back on the board, it shows but isn't read again"
+    );
 }
 
 #[test]

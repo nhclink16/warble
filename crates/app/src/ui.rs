@@ -18,7 +18,7 @@ use warble_engine::{DeviceInfo, Preset};
 use crate::find_view;
 use crate::remote_view;
 use crate::settings::DROP_EXTS;
-use crate::state::{self, Picker, Removed, SEGMENTS, Sound, State, Tab};
+use crate::state::{self, Picker, REMOVAL_NEWS, Removed, SEGMENTS, Sound, State, Tab};
 
 pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
@@ -1612,7 +1612,8 @@ fn empty_state(k: &Kit) -> El {
 /// The readouts under the tabs, the same on every page: a dismissable line about something
 /// that went wrong (a file that didn't load, say), and under it the Undo for a sound just
 /// removed, on the Soundboard's pages only. One place, so a screen reader hears each once
-/// whichever page shows.
+/// whichever page shows; the Undo, added again on each return to the Soundboard, is read
+/// only while the removal is new (see [`REMOVAL_NEWS`]).
 fn notice(s: &State, k: &Kit) -> Option<El> {
     let removed = s.removed.as_ref().filter(|_| s.tab == Tab::Soundboard);
     if s.notice.is_none() && removed.is_none() {
@@ -1692,6 +1693,11 @@ fn removed_row(k: &Kit, r: &Removed) -> El {
         .key("removed")
         .role("status")
         .label(format!("{says} Undo is next to it."))
+        .live_region(if r.at.elapsed() < REMOVAL_NEWS {
+            LiveRegion::Polite
+        } else {
+            LiveRegion::Off
+        })
         .center_y()
         .child(
             text(says)
