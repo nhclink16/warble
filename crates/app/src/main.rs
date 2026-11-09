@@ -66,6 +66,7 @@ fn main() {
             s
         })
         .keep_running()
+        .on_focus(ui::window_focus)
         .on_close(|s: &mut State, tx: &mut Tx| {
             s.save_now();
             // With a tray icon, closing only hides the window; without one there'd be no way back.

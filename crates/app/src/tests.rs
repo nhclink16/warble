@@ -1337,6 +1337,39 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
     assert_eq!(rt.state.settings.talk_key, Some(0x56));
 }
 
+/// Choosing a key stops once the window loses focus, to Alt+Tab or closed to the tray, so a
+/// key pressed in another app isn't taken. With no key yet, push to talk goes back off.
+#[test]
+fn choosing_a_key_stops_when_the_window_loses_focus() {
+    let spec = rune::AppSpec::new("Warble", (400.0, 620.0), State::mock, ui::view);
+    let app = rune::App::new(spec).on_focus(ui::window_focus);
+    let mut rt = app.headless_runtime((400.0, 620.0), Env::new(true, 1.0));
+    settle(&mut rt);
+    rt.window_focus(true);
+    rt.update(|s, _| s.set_push_to_talk(true));
+    settle(&mut rt);
+    assert!(rt.state.choosing_key);
+    rt.window_focus(false);
+    settle(&mut rt);
+    assert!(!rt.state.choosing_key && !rt.state.settings.push_to_talk);
+    assert_eq!(rt.state.ptt.watch(), ptt::Watch::Nothing);
+    assert!(rt.find("talk-key").is_none());
+
+    // With a key already, Change key stops waiting and the key stays.
+    rt.window_focus(true);
+    rt.update(|s, _| {
+        s.settings.talk_key = Some(ptt::MOUSE_4);
+        s.set_push_to_talk(true);
+        s.change_key();
+    });
+    settle(&mut rt);
+    assert!(rt.state.choosing_key);
+    rt.window_focus(false);
+    settle(&mut rt);
+    assert!(!rt.state.choosing_key && rt.state.push_to_talk());
+    assert_eq!(rt.state.ptt.watch(), ptt::Watch::Key(ptt::MOUSE_4));
+}
+
 #[test]
 fn with_push_to_talk_only_the_held_key_sends_and_lights_the_voice() {
     // The header's Live LED, and how loud the mock engine's output is over a second of polls.

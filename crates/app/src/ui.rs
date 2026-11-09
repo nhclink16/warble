@@ -718,6 +718,14 @@ pub fn while_choosing_a_key(s: &mut State, ev: &KeyEvent, _: &mut Tx) -> bool {
     true
 }
 
+/// The window lost focus, to Alt+Tab or closed to the tray: choosing a key stops, so a key
+/// pressed in another app isn't taken. Called while hidden too.
+pub fn window_focus(s: &mut State, focused: bool, _: &mut Tx) {
+    if !focused {
+        s.stop_choosing_key();
+    }
+}
+
 /// A tab's content in a scroll view, for windows shorter than it.
 pub(crate) fn scrolling(content: El) -> El {
     col().key("page").grow(1.0).min_h(0.0).child(
