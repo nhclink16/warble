@@ -1,7 +1,9 @@
-//! Warble's icon, drawn in code: a mint rounded square with five dark waveform bars. The tray
-//! and (on Windows) the window and taskbar use it.
+//! Warble's icon, drawn in code: a rounded square in the app's LED orange with five dark
+//! waveform bars. The tray, the phone's home screen and (on Windows) the window, taskbar and
+//! Start menu shortcut use it.
 
-const MINT: [f32; 3] = [72.0, 214.0, 164.0];
+/// The LED's orange, `ui::led()` (oklch(0.72 0.18 42)), in sRGB: #fe773d.
+const LED: [f32; 3] = [254.0, 119.0, 61.0];
 const INK: [f32; 3] = [18.0, 22.0, 28.0];
 /// Bar heights as fractions of the icon, left to right.
 const BARS: [f32; 5] = [0.22, 0.46, 0.64, 0.40, 0.18];
@@ -28,7 +30,7 @@ pub fn rgba(size: u32) -> Vec<u8> {
             let n = (SS * SS) as f32;
             let t = if body > 0.0 { bar / body } else { 0.0 };
             for i in 0..3 {
-                out.push((MINT[i] + (INK[i] - MINT[i]) * t).round() as u8);
+                out.push((LED[i] + (INK[i] - LED[i]) * t).round() as u8);
             }
             out.push((body / n * 255.0).round() as u8);
         }
@@ -167,5 +169,16 @@ mod tests {
         assert_eq!(at(0, 0)[3], 0);
         assert_eq!(at(16, 3)[3], 255);
         assert!(at(16, 16)[1] < 60, "the middle bar is dark");
+    }
+
+    #[test]
+    fn the_icon_is_the_leds_orange() {
+        let px = super::rgba(32);
+        let body = &px[(3 * 32 + 16) * 4..][..4];
+        let hex = format!(
+            "#{:02x}{:02x}{:02x}{:02x}",
+            body[0], body[1], body[2], body[3]
+        );
+        assert_eq!(hex, crate::ui::led().hex());
     }
 }
