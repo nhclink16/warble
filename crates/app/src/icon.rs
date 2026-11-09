@@ -21,7 +21,7 @@ pub fn rgba(size: u32) -> Vec<u8> {
                     let v = (y as f32 + (sy as f32 + 0.5) / SS as f32) / size as f32;
                     if in_square(u, v) {
                         body += 1.0;
-                        if in_bars(u, v) {
+                        if in_bars(u, v, size) {
                             bar += 1.0;
                         }
                     }
@@ -45,10 +45,17 @@ fn in_square(u: f32, v: f32) -> bool {
     (lo..=hi).contains(&u) && (lo..=hi).contains(&v) && dx * dx + dy * dy <= r * r
 }
 
-fn in_bars(u: f32, v: f32) -> bool {
+fn in_bars(u: f32, v: f32, size: u32) -> bool {
     let (w, pitch) = (0.085, 0.145);
     BARS.iter().enumerate().any(|(i, h)| {
         let cx = 0.5 + (i as f32 - 2.0) * pitch;
+        // At 16 px and under, the middle bar sits on a pixel edge, so it's made exactly two
+        // pixels wide: two of solid ink, not a brown smear over two half-covered ones.
+        let w = if i == 2 && size <= 16 {
+            2.0 / size as f32
+        } else {
+            w
+        };
         // A capsule: the bar's centre line, rounded by half its width.
         let half = (h - w).max(0.0) / 2.0;
         let dy = ((v - 0.5).abs() - half).max(0.0);
@@ -169,6 +176,27 @@ mod tests {
         assert_eq!(at(0, 0)[3], 0);
         assert_eq!(at(16, 3)[3], 255);
         assert!(at(16, 16)[1] < 60, "the middle bar is dark");
+    }
+
+    #[test]
+    fn at_16_px_the_middle_bar_is_two_whole_pixels_of_ink() {
+        let px = super::rgba(16);
+        let at = |x: usize, y: usize| &px[(y * 16 + x) * 4..][..3];
+        let ink = super::INK.map(|c| c as u8);
+        for (x, y) in [(7, 7), (8, 7), (7, 8), (8, 8)] {
+            assert_eq!(at(x, y), ink, "({x}, {y})");
+        }
+        assert!(
+            at(6, 8) != ink && at(9, 8) != ink,
+            "apart from its neighbours"
+        );
+        // Larger, the bar keeps its drawn width: at 32 px its edge only partly covers pixel 14.
+        let px = super::rgba(32);
+        let edge = &px[(16 * 32 + 14) * 4..][..3];
+        assert!(
+            edge != ink && edge != super::LED.map(|c| c as u8),
+            "{edge:?}"
+        );
     }
 
     #[test]
