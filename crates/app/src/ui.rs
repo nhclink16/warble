@@ -1159,7 +1159,10 @@ fn talk_card(s: &State, k: &Kit) -> El {
                     .label("Push to talk")
                     .hide_label()
                     .control_size(ControlSize::Small)
-                    .on_toggle(|s: &mut State| s.set_push_to_talk(!s.settings.push_to_talk))
+                    .on_toggle_tx(|s: &mut State, tx: &mut Tx| {
+                        s.set_push_to_talk(!s.settings.push_to_talk);
+                        show_key_prompt(s, tx);
+                    })
                     .build(k)
                     .key("talk-switch"),
             ),
@@ -1190,7 +1193,10 @@ fn talk_card(s: &State, k: &Kit) -> El {
     };
     // Latched while it waits for a key; pressing it again stops waiting.
     let change = Button::new("Change key")
-        .on_press(State::change_key)
+        .on_press_tx(|s: &mut State, tx: &mut Tx| {
+            s.change_key();
+            show_key_prompt(s, tx);
+        })
         .build(k);
     let change = if choosing {
         raise(change, Lamp::Latched).radius(k.radius.md)
@@ -1220,6 +1226,14 @@ fn talk_card(s: &State, k: &Kit) -> El {
             .color(k.c.text_muted)
             .wrap(),
     )
+}
+
+/// Waiting for a key, the window scrolls to the line that asks for it: keys can't scroll there
+/// meanwhile, since the key reader takes them all.
+fn show_key_prompt(s: &State, tx: &mut Tx) {
+    if s.choosing_key {
+        tx.scroll_into_view("talk-says");
+    }
 }
 
 /// A small LED printed "Talking": lit while the push-to-talk key sends your mic into the call.

@@ -1337,6 +1337,38 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
     assert_eq!(rt.state.settings.talk_key, Some(0x56));
 }
 
+/// In a short window, the line asking for a key scrolls into view as waiting starts: keys go
+/// to the key reader then, so Tab or Page Down can't scroll to it.
+#[test]
+fn waiting_for_a_key_scrolls_its_prompt_into_view() {
+    let size = (360.0, 540.0);
+    let bottom = |rt: &Runtime<State>| {
+        let says = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("talk-says"));
+        let says = says.expect("the line under the key");
+        says.rect[1] + says.rect[3]
+    };
+    let mut rt = Runtime::new(State::mock(), ui::view, size, Env::new(true, 1.0));
+    settle(&mut rt);
+    tab_to(&mut rt, "talk-switch");
+    press(&mut rt, Key::Text(" ".into()));
+    assert!(rt.state.choosing_key);
+    assert!(bottom(&rt) <= size.1, "{} below {}", bottom(&rt), size.1);
+
+    // Change key, with the page scrolled back up.
+    rt.update(|s, _| s.key_pressed(ptt::MOUSE_4));
+    settle(&mut rt);
+    rt.update(|_, tx| tx.scroll_into_view("effect-switch"));
+    settle(&mut rt);
+    assert!(bottom(&rt) > size.1, "scrolled up");
+    tab_to(&mut rt, "talk-key");
+    press(&mut rt, Key::Text(" ".into()));
+    assert!(rt.state.choosing_key);
+    assert!(bottom(&rt) <= size.1, "{} below {}", bottom(&rt), size.1);
+}
+
 /// Choosing a key stops once the window loses focus, to Alt+Tab or closed to the tray, so a
 /// key pressed in another app isn't taken. With no key yet, push to talk goes back off.
 #[test]
