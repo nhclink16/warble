@@ -39,10 +39,12 @@ pub fn escape_goes_back(s: &mut State, ev: &KeyEvent, _: &mut Tx) -> bool {
 fn page_bar(k: &Kit, title: &str, back: fn(&mut State)) -> El {
     // Equal side slots keep the title in the middle, whatever the Back button measures.
     let side = || row().w(0.0).grow(1.0).center_y();
+    // The chevron's ink lines up with the page's edge and its hover fill reaches 8 into the
+    // margin, as a section header's does. The ink starts 4.5 into its 16-point icon.
     row()
         .key("page-bar")
         .w_full()
-        .px(PAD - 6.0)
+        .px(PAD - 8.0)
         .pb(10.0)
         .center_y()
         .child(
@@ -52,7 +54,9 @@ fn page_bar(k: &Kit, title: &str, back: fn(&mut State)) -> El {
                     .variant(ButtonVariant::GhostMuted)
                     .on_press(back)
                     .build(k)
-                    .key("back"),
+                    .key("back")
+                    .pl(8.0 - 4.5)
+                    .pr(8.0),
             ),
         )
         .child(text(title.to_string()).font(TITLE).color(k.c.text_base))
