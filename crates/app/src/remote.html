@@ -104,7 +104,8 @@ header { display: flex; align-items: center; gap: 9px; height: 40px; }
 .logo svg { width: 24px; height: 24px; }
 h1 { flex: 1; font-size: 17px; font-weight: 650; letter-spacing: -0.005em; }
 /* The status, printed on the body like the window's: a lit LED for Live, an unlit one while
-   it's getting going, and a warning triangle for a problem. */
+   it's getting going, and a warning triangle for a problem, still beside the lit LED while
+   the mic goes out. */
 /* It takes the room the name leaves, and only past that do its words end in "…". */
 .pill { display: flex; align-items: center; gap: 9px; height: 28px; min-width: 0; padding: 0 2px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); flex: none; }
@@ -112,8 +113,8 @@ h1 { flex: 1; font-size: 17px; font-weight: 650; letter-spacing: -0.005em; }
 .pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .pill.muted span { color: var(--muted); }
 /* Live: your mic is going into the call. */
-.pill.live::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
-.pill.warn::before, .pill.danger::before { display: none; }
+.pill.live::before, .pill.running::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
+.pill.warn:not(.running)::before, .pill.danger:not(.running)::before { display: none; }
 .pill.warn svg, .pill.danger svg { display: block; }
 .pill.warn svg { color: var(--warn); }
 .pill.danger svg { color: var(--danger); }
@@ -354,9 +355,10 @@ function signOut(expired) {
   pill("Signed out", "muted");
 }
 
-function pill(label, tone) {
+function pill(label, tone, running) {
   const p = $("pill");
   p.className = "pill " + tone;
+  p.classList.toggle("running", running === true);
   p.querySelector("span").textContent = label;
 }
 
@@ -420,7 +422,7 @@ function draw(s) {
   if (first) showTab(store.get("warble-tab") || "sounds");
   $("gate").hidden = true;
   $("app").hidden = false;
-  pill(s.status.label, s.status.tone);
+  pill(s.status.label, s.status.tone, s.status.running);
   drawSounds(s);
   drawVoice(s);
   slider("sound-volume", s.sound_volume, pct(s.sound_volume), true);

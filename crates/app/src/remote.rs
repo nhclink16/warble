@@ -232,7 +232,8 @@ impl State {
         // lights: the chosen voice while it goes out, playing sounds while they reach the call.
         let (status, tone) = self.status_label();
         json!({
-            "status": {"label": status, "tone": tone},
+            // Running, the pill keeps its lit LED beside a problem: the mic still goes out.
+            "status": {"label": status, "tone": tone, "running": self.status.running},
             "effect": s.effect,
             "live": self.voice_live(),
             "cable": self.cable_open(),
@@ -637,13 +638,20 @@ mod tests {
             (
                 json["status"]["label"].clone(),
                 json["status"]["tone"].clone(),
+                json["status"]["running"].clone(),
             )
         };
-        assert_eq!(status(&mut s), ("Live".into(), "live".into()));
+        assert_eq!(status(&mut s), ("Live".into(), "live".into(), true.into()));
         s.hotkey_failures = vec![(crate::state::STOP_KEY.into(), "Taken.".into())];
-        assert_eq!(status(&mut s), ("Hotkeys blocked".into(), "warn".into()));
+        assert_eq!(
+            status(&mut s),
+            ("Hotkeys blocked".into(), "warn".into(), true.into())
+        );
         s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
-        assert_eq!(status(&mut s), ("Audio problem".into(), "danger".into()));
+        assert_eq!(
+            status(&mut s),
+            ("Audio problem".into(), "danger".into(), false.into())
+        );
     }
 
     /// The window's rules for what lights, sent so the phone can't drift from them.

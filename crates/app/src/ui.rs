@@ -745,9 +745,10 @@ fn header(s: &State, k: &Kit) -> El {
 }
 
 /// Running, a lit LED printed "Live": your mic is going into the call. A problem shows its
-/// icon on a key that takes you to Setup, where it's fixed; a device error is too long for
-/// it, so it says "Audio problem" and carries the rest. On Setup it only names the problem:
-/// the line under the picker says the whole of it.
+/// icon on a key that takes you to Setup, where it's fixed, with the LED still lit beside it
+/// while the mic goes out (hotkeys blocked, say). A device error is too long for the key, so
+/// it says "Audio problem" and carries the rest. On Setup it only names the problem: the line
+/// under the picker says the whole of it.
 fn status_pill(s: &State, k: &Kit) -> El {
     let (label, tone) = s.status_label();
     let error = s.status.error.as_deref().filter(|_| tone == "danger");
@@ -774,10 +775,15 @@ fn status_pill(s: &State, k: &Kit) -> El {
         .truncate()
         .shrink()
         .a11y_hidden();
+    let live = s.status.running.then(|| led_dot(true));
     let pill = match tone {
-        "live" => return pill.child(led_dot(true)).child(words),
-        "warn" => pill.child(icon(&WARNING, ICON).color(warn())).child(words),
+        "live" => return pill.children(live).child(words),
+        "warn" => pill
+            .children(live)
+            .child(icon(&WARNING, ICON).color(warn()))
+            .child(words),
         "danger" => pill
+            .children(live)
             .child(icon(&WARNING, ICON).color(danger()))
             .child(words),
         _ => pill

@@ -590,6 +590,30 @@ fn blocked_hotkeys_show_in_the_pill_and_it_opens_setup() {
 }
 
 #[test]
+fn the_live_led_stays_beside_a_problem_while_the_mic_goes_out() {
+    let leds = |rt: &Runtime<State>| {
+        let pill = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.path.contains("/status/"));
+        pill.filter(|e| is_led(e.fill)).count()
+    };
+    let mut rt = app();
+    scene(&mut rt, "hotkeys-failed");
+    rt.update(|s, _| s.set_tab(Tab::Voice));
+    settle(&mut rt);
+    assert_eq!(rt.state.status_label(), ("Hotkeys blocked", "warn"));
+    assert_eq!(leds(&rt), 1, "still live");
+
+    let mut rt = app();
+    scene(&mut rt, "no-cable");
+    rt.update(|s, _| s.set_tab(Tab::Voice));
+    settle(&mut rt);
+    assert_eq!(rt.state.status_label(), ("VB-CABLE missing", "warn"));
+    assert_eq!(leds(&rt), 0, "nothing goes out");
+}
+
+#[test]
 fn a_device_error_is_short_in_the_pill_and_whole_under_its_picker() {
     let mut rt = app();
     let why = "Couldn't open Blue Yeti: another app is using it";
