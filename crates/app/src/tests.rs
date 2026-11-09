@@ -9,7 +9,7 @@ use crate::find::YouTube;
 use crate::ptt;
 use crate::settings::HOLD_DIR;
 use crate::state::{REMOVAL_NEWS, REMOVE_SETTLE, State, Tab};
-use crate::ui;
+use crate::ui::{self, PAD};
 
 fn app() -> Runtime<State> {
     let mut rt = Runtime::new(State::mock(), ui::view, (400.0, 620.0), Env::new(true, 1.0));
@@ -688,6 +688,14 @@ fn lit(rt: &Runtime<State>) -> Vec<String> {
         .collect()
 }
 
+/// The element keyed `key` glows: an LED-coloured shadow, which `lit` can't see. Stop all's
+/// rim and the footswitch's ring light this way.
+fn glows(rt: &Runtime<State>, key: &str) -> bool {
+    let pose = rt.presented_pose(key);
+    let pose = pose.unwrap_or_else(|| panic!("no element {key}"));
+    pose.shadows().iter().any(|s| is_led(s.color))
+}
+
 fn scene(rt: &mut Runtime<State>, name: &str) {
     let (_, set) = ui::SCENES.iter().find(|(n, _)| *n == name).unwrap();
     rt.update(|s, _| set(s));
@@ -705,6 +713,7 @@ fn only_audio_going_into_the_call_lights_the_led() {
         "the chosen voice lights while the effect is on"
     );
     assert!(on.iter().all(|p| p.contains("/preset-deep")), "{on:?}");
+    assert!(glows(&rt, "effect-switch"), "the footswitch's ring");
 
     rt.update(|s, _| s.set_effect(false));
     settle(&mut rt);
@@ -714,6 +723,7 @@ fn only_audio_going_into_the_call_lights_the_led() {
         Vec::<String>::new(),
         "nothing lights with the effect off"
     );
+    assert!(!glows(&rt, "effect-switch"));
 
     let mut rt = app();
     scene(&mut rt, "soundboard");
@@ -742,6 +752,7 @@ fn only_audio_going_into_the_call_lights_the_led() {
         settle(&mut rt);
         assert!(rt.state.settings.effect && !rt.state.voice_live(), "{name}");
         assert_eq!(lit(&rt), Vec::<String>::new(), "{name}");
+        assert!(!glows(&rt, "effect-switch"), "{name}");
     }
 
     // Sounds go into the call through VB-CABLE, even while the mic has a problem. With no
@@ -776,6 +787,34 @@ fn only_audio_going_into_the_call_lights_the_led() {
             .as_array()
             .is_some_and(|s| s.contains(&"disabled".into()));
         assert!(!disabled, "{name}: Stop all still stops them");
+        assert_eq!(
+            glows(&rt, "stop-all"),
+            reaches_call,
+            "{name}: Stop all's rim"
+        );
+    }
+}
+
+/// Back on Find sounds and Trim: its chevron's ink starts on the page's edge, where the field
+/// under it does, and its hover fill reaches 8 into the margin.
+#[test]
+fn back_lines_up_with_the_page_edge() {
+    for (name, field) in [("find", "search-field"), ("trim", "trim-name")] {
+        let mut rt = app();
+        scene(&mut rt, name);
+        let els = rt.elements();
+        let keyed = |key: &str| {
+            let e = els.iter().find(|e| e.key.as_deref() == Some(key));
+            e.unwrap_or_else(|| panic!("{name}: no {key}")).rect[0]
+        };
+        let icon = els
+            .iter()
+            .find(|e| e.path.contains("/back/") && e.role == "icon");
+        let icon = icon.unwrap_or_else(|| panic!("{name}: no chevron"));
+        assert_eq!(keyed("back"), PAD - 8.0, "{name}");
+        // The ink starts 4.5 into the chevron's 16-point box.
+        assert_eq!(icon.rect[0] + 4.5, PAD, "{name}");
+        assert_eq!(keyed(field), PAD, "{name}");
     }
 }
 
