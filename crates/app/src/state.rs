@@ -511,6 +511,9 @@ impl State {
             }
             _ => r.path,
         };
+        // Back on the board: a "press Undo again" from a failed try is out of date. If the
+        // load fails, it says so itself.
+        self.notice = None;
         self.load_paths(vec![path], false);
     }
 

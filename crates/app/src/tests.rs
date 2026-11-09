@@ -401,6 +401,25 @@ fn a_failed_undo_keeps_the_undo() {
 }
 
 #[test]
+fn an_undo_that_works_clears_the_failed_tries_notice() {
+    let (mut rt, original) = app_with_folder("retry-works");
+    rt.drop_files(vec![original], Some((200.0, 300.0)));
+    settle(&mut rt);
+    remove_first(&mut rt);
+    let held = rt.state.removed.as_ref().unwrap().held.clone().unwrap();
+    std::fs::rename(&held, held.with_extension("away")).unwrap();
+    tap(&mut rt, "undo-remove");
+    assert!(rt.find("notice").is_some(), "the failed try says so");
+
+    // The app that held the file lets go, and Undo is pressed again.
+    std::fs::rename(held.with_extension("away"), &held).unwrap();
+    tap(&mut rt, "undo-remove");
+    assert_eq!(rt.state.sounds.len(), 1, "back on the board");
+    assert_eq!(rt.state.notice, None);
+    assert!(rt.find("notice").is_none() && rt.find("removed").is_none());
+}
+
+#[test]
 fn many_failed_files_name_three_and_count_the_rest() {
     let mut rt = app();
     let errors: Vec<String> = (1..=5).map(|i| format!("File {i} failed.")).collect();
