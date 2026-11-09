@@ -3,11 +3,11 @@
 //! Signal path (the virtual cable's output stream is the master clock):
 //!
 //! ```text
-//! mic (cpal input) ──ring──▶ drift/rate resampler ──▶ mic gain ──▶ Voice (warble-dsp)
-//!                                                                     │
-//!                                   soundboard voices (mixed) ──▶  sum ──▶ VB-CABLE output
-//!                                                                     │
-//!                                                                     └──ring──▶ resampler ──▶ monitor output
+//! mic (cpal input) ──ring──▶ drift/rate resampler ──▶ mic gain ──▶ push to talk ──▶ Voice (warble-dsp)
+//!                                                                                      │
+//!                                                    soundboard voices (mixed) ──▶  sum ──▶ VB-CABLE output
+//!                                                                                      │
+//!                                                                                      └──ring──▶ resampler ──▶ monitor output
 //! ```
 //!
 //! People in the call hear the VB-CABLE output: in Discord they pick
@@ -250,6 +250,25 @@ impl Engine {
         }
     }
 
+    /// Push to talk: while on, the mic reaches the call (and "hear yourself") only while
+    /// `set_talking(true)`, and for a moment after, so the last syllable isn't cut off.
+    /// Soundboard sounds always go through.
+    pub fn set_push_to_talk(&self, on: bool) {
+        match &self.inner {
+            Inner::Mock(m) => lock(m).push_to_talk = on,
+            Inner::Real(r) => r.controls().push_to_talk.store(on, Relaxed),
+        }
+    }
+
+    /// The push-to-talk key is held. Lock-free on the real engine, so the key reader calls it
+    /// from its own thread the moment the key moves.
+    pub fn set_talking(&self, held: bool) {
+        match &self.inner {
+            Inner::Mock(m) => lock(m).talking = held,
+            Inner::Real(r) => r.controls().talking.store(held, Relaxed),
+        }
+    }
+
     /// Decode a WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC) file into memory. Runs on the caller's thread.
     /// Errors are plain English and say what to do ("There’s no sound in “clip.mp3”. Try another file.").
     /// Clips longer than 5 minutes are refused. The mock accepts any path without reading it.
@@ -333,6 +352,8 @@ mod mock {
         pub monitor_volume: f32,
         pub sound_volume: f32,
         pub hear_sounds: bool,
+        pub push_to_talk: bool,
+        pub talking: bool,
         pub next_sound: u32,
         pub playing: Vec<(SoundId, u32)>,
         /// (start, end, rate, status() calls since it started).
@@ -351,6 +372,8 @@ mod mock {
                 monitor_volume: 0.8,
                 sound_volume: 0.8,
                 hear_sounds: true,
+                push_to_talk: false,
+                talking: false,
                 next_sound: 0,
                 playing: Vec::new(),
                 preview: None,
@@ -399,6 +422,12 @@ mod mock {
             // A talking-voice shape: two slow sines, clipped to silence between "words".
             let voice =
                 ((t.sin() * 0.5 + (t * 2.7).sin() * 0.3) * self.mic_gain.min(2.0)).clamp(0.0, 1.0);
+            // Push to talk closes the mic at once here: the mock has no clock for its tail.
+            let out = if self.push_to_talk && !self.talking {
+                0.0
+            } else {
+                voice * 0.9
+            };
             let sounds = if self.playing.is_empty() {
                 0.0
             } else {
@@ -414,7 +443,7 @@ mod mock {
                 monitor_name: pick(&self.config.monitor, "Headphones (USB Audio Device)"),
                 error: None,
                 input_level: voice,
-                output_level: (voice * 0.9 + sounds).min(1.0),
+                output_level: (out + sounds).min(1.0),
                 playing: self.playing.iter().map(|(id, _)| *id).collect(),
                 preview,
                 underruns: 0,
@@ -522,6 +551,8 @@ mod tests {
         engine.set_monitor(true);
         engine.set_monitor_volume(0.5);
         engine.set_sound_volume(0.5);
+        engine.set_push_to_talk(true);
+        engine.set_talking(true);
         let path = sound::tests::temp_file("engine.wav", &sound::tests::small_wav());
         let id = engine.load_sound(&path).expect("loads");
         assert!(
@@ -561,6 +592,32 @@ mod tests {
         engine.preview(&clip, 0..3000);
         engine.stop_preview();
         assert_eq!(engine.status().preview, None);
+    }
+
+    #[test]
+    fn the_mock_closes_the_mic_with_push_to_talk() {
+        let engine = Engine::mock();
+        // The mock's voice pauses between words: look over a second of polls.
+        let levels = |engine: &Engine| {
+            let all: Vec<Status> = (0..30).map(|_| engine.status()).collect();
+            let peak = |f: fn(&Status) -> f32| all.iter().map(f).fold(0.0, f32::max);
+            (peak(|s| s.input_level), peak(|s| s.output_level))
+        };
+        let (mic, out) = levels(&engine);
+        assert!(mic > 0.1 && out > 0.1, "off: the voice goes out");
+        engine.set_push_to_talk(true);
+        let (mic, out) = levels(&engine);
+        assert!(mic > 0.1, "the Mic meter still moves");
+        assert_eq!(out, 0.0, "nothing goes out with the key up");
+        engine.set_talking(true);
+        assert!(
+            levels(&engine).1 > 0.1,
+            "the voice goes out while it's held"
+        );
+        engine.set_talking(false);
+        let id = engine.load_sound(Path::new("horn.wav")).unwrap();
+        engine.play_sound(id);
+        assert!(levels(&engine).1 > 0.2, "sounds always go out");
     }
 
     #[test]

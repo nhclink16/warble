@@ -39,6 +39,9 @@ const FILTER_SECONDS: f64 = 0.5;
 const MAX_CORRECTION: f64 = 0.01;
 /// Meter fall-off time constant.
 const METER_SECONDS: f32 = 0.15;
+/// After the push-to-talk key goes up, the mic stays open this long, so the last syllable
+/// isn't cut off.
+pub(crate) const TALK_TAIL_SECONDS: f32 = 0.2;
 
 /// An `f32` stored as bits, for scalar parameters shared with the audio thread.
 pub(crate) struct AtomicF32(AtomicU32);
@@ -66,6 +69,11 @@ pub(crate) struct Controls {
     pub sound_volume: AtomicF32,
     /// Play soundboard clips in the headphones too, apart from "hear yourself".
     pub hear_sounds: AtomicBool,
+    /// Push to talk: the mic reaches the call (and "hear yourself") only while `talking`, and
+    /// `TALK_TAIL_SECONDS` after. The soundboard always does.
+    pub push_to_talk: AtomicBool,
+    /// The push-to-talk key is held. The key reader's thread sets it directly.
+    pub talking: AtomicBool,
     // Audio → UI.
     pub input_level: AtomicF32,
     pub output_level: AtomicF32,
@@ -87,6 +95,8 @@ impl Default for Controls {
             monitor_volume: AtomicF32::new(0.8),
             sound_volume: AtomicF32::new(0.8),
             hear_sounds: AtomicBool::new(true),
+            push_to_talk: AtomicBool::new(false),
+            talking: AtomicBool::new(false),
             input_level: AtomicF32::new(0.0),
             output_level: AtomicF32::new(0.0),
             underruns: AtomicU64::new(0),
@@ -125,6 +135,11 @@ impl Controls {
         } else {
             0.0
         }
+    }
+
+    /// Whether push to talk lets the mic through: it's off, or its key is held.
+    pub fn mic_open(&self) -> bool {
+        !self.push_to_talk.load(Relaxed) || self.talking.load(Relaxed)
     }
 
     /// Whether anything is meant to come out of the headphones.
@@ -514,10 +529,10 @@ impl Soundboard {
     }
 }
 
-/// Mic → gain → voice effect → + soundboard → soft limit → out (the call). The headphones get
-/// their own mix: the voice only while "hear yourself" is on, the soundboard while "hear sounds"
-/// is on, and a preview always. It goes to the monitor ring, or to `out` when the master is the
-/// monitor (no cable).
+/// Mic → gain → push to talk → voice effect → + soundboard → soft limit → out (the call). The
+/// headphones get their own mix: the voice only while "hear yourself" is on, the soundboard while
+/// "hear sounds" is on, and a preview always. It goes to the monitor ring, or to `out` when the
+/// master is the monitor (no cable).
 pub(crate) struct Graph {
     rate: f32,
     controls: Arc<Controls>,
@@ -534,6 +549,10 @@ pub(crate) struct Graph {
     sounds: Vec<f32>,
     heard: Vec<f32>,
     gain: f32,
+    /// The push-to-talk gate, ramped between 0 (closed) and 1 like `gain`, and how many more
+    /// samples it stays open since the key went up.
+    open: f32,
+    tail: usize,
     /// Ramped headphone gains for the voice and the soundboard.
     heard_voice: f32,
     heard_sounds: f32,
@@ -559,6 +578,8 @@ impl Graph {
         Graph {
             rate: rate.max(1) as f32,
             gain: controls.mic_gain.load().clamp(0.0, 4.0),
+            open: if controls.mic_open() { 1.0 } else { 0.0 },
+            tail: 0,
             heard_voice: controls.monitor_gain(),
             heard_sounds: controls.hear_sounds_gain(),
             controls,
@@ -613,6 +634,7 @@ impl Graph {
             self.voice.set_enabled(enabled);
         }
         let gain = c.mic_gain.load().clamp(0.0, 4.0);
+        let (held, tail) = (c.mic_open(), (self.rate * TALK_TAIL_SECONDS) as usize);
         let sound_volume = c.sound_volume.load().clamp(0.0, 1.0);
         let (heard_voice, heard_sounds) = (c.monitor_gain(), c.hear_sounds_gain());
         let to_headphones = self.monitor.is_some() || self.master_is_monitor;
@@ -627,7 +649,16 @@ impl Graph {
                 None => block.fill(0.0),
             }
             ramp(block, &mut self.gain, gain);
+            // The Mic meter shows your mic whether or not push to talk lets it through.
             let input_peak = peak(block);
+            // Push to talk gates the mic before the voice effect, so an echo or a cave rings
+            // out after the key goes up. The user's mic gain is left as it is.
+            self.tail = if held {
+                tail
+            } else {
+                self.tail.saturating_sub(block.len())
+            };
+            ramp(block, &mut self.open, if self.tail > 0 { 1.0 } else { 0.0 });
             self.voice.process(block);
             let n = block.len();
             let (sounds, heard) = (&mut self.sounds[..n], &mut self.heard[..n]);
@@ -1116,6 +1147,101 @@ mod tests {
         graph.process(&mut call, 0.0);
         assert_eq!(controls.preview_at(), None);
         assert_eq!(Arc::strong_count(&clip), 1);
+    }
+
+    #[test]
+    fn push_to_talk_lets_the_mic_through_while_held_and_a_moment_after() {
+        let controls = Arc::new(Controls::default());
+        controls.effect_enabled.store(false, Relaxed);
+        controls.sound_volume.store(1.0);
+        // Hear yourself, at full volume: the headphones hear what the call hears.
+        controls.monitor.store(true, Relaxed);
+        controls.monitor_volume.store(1.0);
+        controls.hear_sounds.store(false, Relaxed);
+        let (mut mic, mic_rx) = ring(48000, 48000);
+        let (mon_tx, mut mon_rx) = ring(48000, 48000);
+        let (mut board, commands) = RingBuffer::new(64);
+        let mut graph = Graph::new(
+            48000,
+            controls.clone(),
+            commands,
+            Some(mic_rx),
+            Some(mon_tx),
+            false,
+        );
+        let mut t = 0.0;
+        // `n` blocks of 10 ms with a steady 0.5 from the mic: the last block into the call,
+        // and the last into the headphones.
+        let mut run = |graph: &mut Graph, n: usize| {
+            let (mut call, mut heard) = (vec![0.0; 480], Vec::new());
+            for _ in 0..n {
+                t += 0.01;
+                mic.push(480, std::iter::repeat_n(0.5, 480), t);
+                graph.process(&mut call, t);
+                heard.clear();
+                while let Ok(s) = mon_rx.rx.pop() {
+                    heard.push(s);
+                }
+            }
+            (call, heard)
+        };
+        let near =
+            |buf: &[f32], v: f32| !buf.is_empty() && buf.iter().all(|s| (s - v).abs() < 1e-4);
+
+        let (call, heard) = run(&mut graph, 20);
+        assert!(
+            near(&call, 0.5) && near(&heard, 0.5),
+            "off: the mic goes out"
+        );
+
+        // On with the key up: the mic stays open for the tail, then closes.
+        controls.push_to_talk.store(true, Relaxed);
+        assert!(TALK_TAIL_SECONDS > 0.15 && TALK_TAIL_SECONDS < 0.25);
+        let (call, _) = run(&mut graph, 15);
+        assert!(near(&call, 0.5), "still open 150 ms on");
+        let (call, heard) = run(&mut graph, 10);
+        assert!(near(&call, 0.0), "closed 250 ms on");
+        assert!(near(&heard, 0.0), "and in the headphones");
+        assert!(
+            controls.input_level.load() > 0.4,
+            "the Mic meter still shows the mic"
+        );
+
+        // Held: open within one block, faded in rather than switched, so it doesn't click.
+        controls.talking.store(true, Relaxed);
+        let (call, _) = run(&mut graph, 1);
+        assert!(
+            call[0] < 0.01 && near(&call[479..], 0.5),
+            "fades in across the block"
+        );
+        assert!(
+            call.windows(2).all(|w| (w[1] - w[0]).abs() < 0.01),
+            "no click"
+        );
+        let (call, heard) = run(&mut graph, 1);
+        assert!(near(&call, 0.5) && near(&heard, 0.5), "open while held");
+        assert_eq!(
+            controls.mic_gain.load(),
+            1.0,
+            "the mic gain is the user's own"
+        );
+
+        // Let go: the last syllable gets its tail, then the mic closes again.
+        controls.talking.store(false, Relaxed);
+        let (call, _) = run(&mut graph, 15);
+        assert!(near(&call, 0.5), "still open 150 ms after letting go");
+        let (call, _) = run(&mut graph, 10);
+        assert!(near(&call, 0.0), "closed 250 ms after letting go");
+
+        // Sounds always go through.
+        board
+            .push(Command::Play(SoundId(1), sound(0.25, 48000, 48000)))
+            .ok();
+        let (call, _) = run(&mut graph, 1);
+        assert!(
+            near(&call, 0.25),
+            "a sound reaches the call with the mic closed"
+        );
     }
 
     #[test]
