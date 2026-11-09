@@ -785,7 +785,7 @@ fn status_pill(s: &State, k: &Kit) -> El {
         .role("status")
         .label(match error.filter(|_| key) {
             Some(e) => format!("{label}: {e}"),
-            None => label.to_string(),
+            None => s.status_spoken(),
         })
         .h(28.0)
         .gap(8.0)

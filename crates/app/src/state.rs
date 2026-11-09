@@ -361,6 +361,24 @@ impl State {
         }
     }
 
+    /// What a screen reader hears for the status pill, in the window and on the phone. While the
+    /// engine runs it says "Live", beside a warning too, since the mic still goes out then, and
+    /// with push to talk that the mic waits for its key. It doesn't change as the key goes down
+    /// and up, so the pill, a live region, stays quiet while you talk.
+    pub fn status_spoken(&self) -> String {
+        let (label, tone) = self.status_label();
+        let live = if self.push_to_talk() {
+            "Live, push to talk"
+        } else {
+            "Live"
+        };
+        match tone {
+            "live" => live.into(),
+            _ if self.status.running => format!("{live}. {label}"),
+            _ => label.into(),
+        }
+    }
+
     /// Your mic is going into the call: the mic → cable path runs, and push to talk is off or
     /// its key is held. Only then does the Live LED light, in the window and on the phone.
     pub fn mic_live(&self) -> bool {

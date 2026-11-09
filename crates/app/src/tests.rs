@@ -605,6 +605,8 @@ fn the_live_led_stays_beside_a_problem_while_the_mic_goes_out() {
     settle(&mut rt);
     assert_eq!(rt.state.status_label(), ("Hotkeys blocked", "warn"));
     assert_eq!(leds(&rt), 1, "still live");
+    // A screen reader hears what the lit LED shows, too.
+    assert_eq!(a11y_node(&rt, "status")["name"], "Live. Hotkeys blocked");
 
     let mut rt = app();
     scene(&mut rt, "no-cable");
@@ -1439,6 +1441,10 @@ fn with_push_to_talk_only_the_held_key_sends_and_lights_the_voice() {
         "the key is up: nothing goes out"
     );
     assert_eq!(live_leds(&rt), 0);
+    // The header doesn't say plain "Live" while the mic waits for the key, and it doesn't
+    // change at each press either: it's a live region.
+    let header = |rt: &Runtime<State>| a11y_node(rt, "status")["name"].clone();
+    assert_eq!(header(&rt), "Live, push to talk");
     let led = a11y_node(&rt, "talking");
     assert_eq!(
         (&led["role"], &led["name"]),
@@ -1461,6 +1467,7 @@ fn with_push_to_talk_only_the_held_key_sends_and_lights_the_voice() {
     assert!(on.iter().any(voice) && on.iter().any(talking), "{on:?}");
     assert!(on.iter().all(|p| voice(p) || talking(p)), "{on:?}");
     assert_eq!(live_leds(&rt), 1);
+    assert_eq!(header(&rt), "Live, push to talk");
     assert_eq!(a11y_node(&rt, "talking")["name"], "Talking");
     assert!(out(&rt) > 0.1, "the voice goes out while it's held");
 

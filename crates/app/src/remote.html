@@ -107,11 +107,13 @@ h1 { flex: 1; font-size: 17px; font-weight: 650; letter-spacing: -0.005em; }
    out (with push to talk, while its key is held), and a warning triangle for a problem, still
    beside the lit LED while the mic goes out. */
 /* It takes the room the name leaves, and only past that do its words end in "…". */
-.pill { display: flex; align-items: center; gap: 9px; height: 28px; min-width: 0; padding: 0 2px; }
+.pill { position: relative; display: flex; align-items: center; gap: 9px; height: 28px; min-width: 0; padding: 0 2px; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--led-off); flex: none; }
 .pill svg { display: none; width: 16px; height: 16px; flex: none; }
 .pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .pill.muted span { color: var(--muted); }
+/* What a screen reader hears: the LED's meaning too, which the printed word leaves out. */
+.pill .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* Lit while your mic is going into the call. */
 .pill.running::before { background: var(--led-hot); box-shadow: 0 0 8px rgba(254, 119, 61, 0.9); }
 .pill.warn:not(.running)::before, .pill.danger:not(.running)::before { display: none; }
@@ -253,7 +255,7 @@ body.offline main, body.offline .stopbar { opacity: 0.5; pointer-events: none; }
 <header>
   <div class="logo" aria-hidden="true"><svg viewBox="0 0 16 16"><rect x="2.68" y="6.24" width="1.36" height="3.52" rx=".68" fill="currentColor"/><rect x="5" y="4.32" width="1.36" height="7.36" rx=".68" fill="currentColor"/><rect x="7.32" y="2.88" width="1.36" height="10.24" rx=".68" fill="currentColor"/><rect x="9.64" y="4.8" width="1.36" height="6.4" rx=".68" fill="currentColor"/><rect x="11.96" y="6.56" width="1.36" height="2.88" rx=".68" fill="currentColor"/></svg></div>
   <h1>Warble</h1>
-  <div class="pill muted" id="pill" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.25 14.25 13.25H1.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.4" r=".9" fill="currentColor"/></svg><span>Connecting…</span></div>
+  <div class="pill muted" id="pill" role="status"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.25 14.25 13.25H1.75Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><path d="M8 6.5v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/><circle cx="8" cy="11.4" r=".9" fill="currentColor"/></svg><span aria-hidden="true">Connecting…</span><span class="sr">Connecting…</span></div>
 </header>
 
 <div id="gate" class="gate" hidden>
@@ -355,11 +357,14 @@ function signOut(expired) {
   pill("Signed out", "muted");
 }
 
-function pill(label, tone, running) {
+function pill(label, tone, running, spoken) {
   const p = $("pill");
   p.className = "pill " + tone;
   p.classList.toggle("running", running === true);
   p.querySelector("span").textContent = label;
+  // Set only when it changes, so the live region isn't read again at every poll.
+  const sr = p.querySelector(".sr");
+  if (sr.textContent !== (spoken || label)) sr.textContent = spoken || label;
 }
 
 function toast(text) {
@@ -422,7 +427,7 @@ function draw(s) {
   if (first) showTab(store.get("warble-tab") || "sounds");
   $("gate").hidden = true;
   $("app").hidden = false;
-  pill(s.status.label, s.status.tone, s.status.running);
+  pill(s.status.label, s.status.tone, s.status.running, s.status.spoken);
   drawSounds(s);
   drawVoice(s);
   slider("sound-volume", s.sound_volume, pct(s.sound_volume), true);

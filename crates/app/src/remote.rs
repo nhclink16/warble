@@ -230,11 +230,19 @@ impl State {
         };
         // The same words and colour as the window's status pill, and the same rules for what
         // lights: the chosen voice while it goes out, playing sounds while they reach the call.
+        // The phone polls once a second, so with push to talk its LEDs trail the key by up to a
+        // second, and may miss a short press. It only shows them.
         let (status, tone) = self.status_label();
         json!({
             // While the mic goes out the pill's LED lights, beside a problem too. With push to
-            // talk that's only while its key is held.
-            "status": {"label": status, "tone": tone, "running": self.mic_live()},
+            // talk that's only while its key is held. A screen reader hears `spoken`, which
+            // doesn't change with each press.
+            "status": {
+                "label": status,
+                "tone": tone,
+                "running": self.mic_live(),
+                "spoken": self.status_spoken(),
+            },
             "effect": s.effect,
             "live": self.voice_live(),
             "cable": self.cable_open(),
@@ -653,6 +661,33 @@ mod tests {
             status(&mut s),
             ("Audio problem".into(), "danger".into(), false.into())
         );
+    }
+
+    /// A screen reader on the phone hears what the window's pill says to one: that the mic
+    /// still goes out beside a warning, and that push to talk holds it back, in words that
+    /// don't change with each press of the key.
+    #[test]
+    fn the_phone_tells_a_screen_reader_what_the_led_shows() {
+        let mut s = on();
+        let key = s.settings.remote_key.clone();
+        let spoken = |s: &mut State| {
+            let (_, json, _) = s.api("GET", "/api/state", &key, b"");
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            json["status"]["spoken"].as_str().unwrap().to_string()
+        };
+        assert_eq!(spoken(&mut s), "Live");
+        s.hotkey_failures = vec![(crate::state::STOP_KEY.into(), "Taken.".into())];
+        assert_eq!(spoken(&mut s), "Live. Hotkeys blocked");
+        s.settings.talk_key = Some(crate::ptt::MOUSE_4);
+        s.set_push_to_talk(true);
+        for held in [false, true, false] {
+            s.key_held(held);
+            assert_eq!(spoken(&mut s), "Live, push to talk. Hotkeys blocked");
+        }
+        s.hotkey_failures.clear();
+        assert_eq!(spoken(&mut s), "Live, push to talk");
+        s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
+        assert_eq!(spoken(&mut s), "Audio problem");
     }
 
     /// The window's rules for what lights, sent so the phone can't drift from them.
