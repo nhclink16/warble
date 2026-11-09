@@ -228,11 +228,14 @@ impl State {
             ),
             YouTube::Idle => ("idle", ""),
         };
-        // The same words and colour as the window's status pill.
+        // The same words and colour as the window's status pill, and the same rules for what
+        // lights: the chosen voice while it goes out, playing sounds while they reach the call.
         let (status, tone) = self.status_label();
         json!({
             "status": {"label": status, "tone": tone},
             "effect": s.effect,
+            "live": self.voice_live(),
+            "cable": self.cable_open(),
             "preset": s.preset().id(),
             "presets": presets,
             "sounds": sounds,
@@ -641,6 +644,28 @@ mod tests {
         assert_eq!(status(&mut s), ("Hotkeys blocked".into(), "warn".into()));
         s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
         assert_eq!(status(&mut s), ("Audio problem".into(), "danger".into()));
+    }
+
+    /// The window's rules for what lights, sent so the phone can't drift from them.
+    #[test]
+    fn the_phone_is_told_what_goes_into_the_call() {
+        let mut s = on();
+        let key = s.settings.remote_key.clone();
+        let says = |s: &mut State| {
+            let (_, json, _) = s.api("GET", "/api/state", &key, b"");
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            [&json["effect"], &json["live"], &json["cable"]].map(|v| v.as_bool().unwrap())
+        };
+        assert_eq!(says(&mut s), [true, true, true]);
+        s.set_effect(false);
+        assert_eq!(says(&mut s), [false, false, true], "effect off");
+        s.set_effect(true);
+        // The mic fails but the cable opens: sounds still go out, the voice doesn't.
+        s.sim_error = Some("Couldn't open Blue Yeti: another app is using it".into());
+        assert_eq!(says(&mut s), [true, false, true], "audio problem");
+        s.sim_error = None;
+        s.sim_no_cable = true;
+        assert_eq!(says(&mut s), [true, false, false], "no cable");
     }
 
     #[test]

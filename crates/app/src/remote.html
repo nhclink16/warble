@@ -61,7 +61,6 @@ button { border: 0; background: none; cursor: pointer; touch-action: manipulatio
 /* Panel lettering: printed on the body in small capitals. */
 .pill span, .tabs button, .card h2, .effect .title, .slider label {
   font-family: var(--mono);
- 
   font-size: 11.5px;
   font-weight: 600;
   line-height: 16px;
@@ -80,7 +79,7 @@ button { border: 0; background: none; cursor: pointer; touch-action: manipulatio
     linear-gradient(var(--rim-top, #3f3d3a), var(--rim-bottom, #110f0d)) border-box;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.55), 0 0 16px var(--glow, transparent);
 }
-.tile.playing, .presets:not(.off) .preset[aria-checked="true"], .stop.lit {
+.sounds.cable .tile.playing, .presets.live .preset[aria-checked="true"], .stop.lit {
   --fill: #4c3328;
   --under: rgba(254, 119, 61, 0.34);
   --rim-top: #da6a3b;
@@ -88,7 +87,7 @@ button { border: 0; background: none; cursor: pointer; touch-action: manipulatio
   --glow: rgba(254, 119, 61, 0.3);
 }
 /* The LED itself, top right on a lit pad. */
-.tile.playing::after, .presets:not(.off) .preset[aria-checked="true"]::after {
+.sounds.cable .tile.playing::after, .presets.live .preset[aria-checked="true"]::after {
   content: "";
   position: absolute;
   top: 9px;
@@ -158,7 +157,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .sockets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; margin-bottom: 14px; }
 .sockets span { height: 72px; padding: 6px 9px; border: 1px solid transparent; border-radius: 6px; text-align: left; font: 500 18px/22px var(--mono); color: #8a8682;
   background: linear-gradient(#12100e, #12100e) padding-box, linear-gradient(#0b0907, #262421) border-box; box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45); }
-.card.empty h2 { font-family: inherit; font-variation-settings: normal; font-size: 16px; font-weight: 600; line-height: 1.4; letter-spacing: normal; text-transform: none; color: var(--ink); }
+.card.empty h2 { font-family: inherit; font-size: 16px; font-weight: 600; line-height: 1.4; letter-spacing: normal; text-transform: none; color: var(--ink); }
 .empty p { max-width: 32ch; }
 
 .stopbar { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px calc(env(safe-area-inset-right) + var(--pad)) calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + var(--pad));
@@ -185,7 +184,9 @@ main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
   background: linear-gradient(rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.25)) padding-box, linear-gradient(#211f1c, #211f1c) padding-box, linear-gradient(#4a4744, #0d0b09) border-box; }
 .foot span { top: 50%; left: 50%; width: 32px; height: 32px; margin: -16px 0 0 -16px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   background: linear-gradient(rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.3)) padding-box, linear-gradient(#656360, #656360) padding-box, linear-gradient(#a7a4a1, #302d2b) border-box; }
-.effect.on .foot { border-color: #ff8654; box-shadow: 0 0 14px rgba(254, 119, 61, 0.45); }
+/* On but not going out, the ring is a key's edge; it lights while the changed voice goes out. */
+.effect.on .foot { border-color: var(--edge); }
+.effect.live .foot { border-color: #ff8654; box-shadow: 0 0 14px rgba(254, 119, 61, 0.45); }
 .effect:active .foot { transform: scale(0.94); }
 .presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .preset { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; min-height: 84px; padding: 22px 2px 10px;
@@ -195,8 +196,9 @@ main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .preset:active { transform: scale(0.96); }
 .preset[aria-checked="true"] { color: var(--ink); }
 .preset[aria-checked="true"] .num { color: var(--ink); }
-/* Chosen while the effect is off: latched, lighter, but not lit. */
-.presets.off .preset[aria-checked="true"] { --fill: #302d2b; --rim-top: #8a8783; --rim-bottom: #4a4744; }
+/* Chosen while the changed voice isn't going out, or playing with no VB-CABLE (only in the
+   headphones): latched, lighter, but not lit. */
+.presets:not(.live) .preset[aria-checked="true"], .sounds:not(.cable) .tile.playing { --fill: #302d2b; --rim-top: #8a8783; --rim-bottom: #4a4744; }
 /* Small phones (up to the 375-wide iPhones): “Chipmunk” still fits on its pad. */
 @media (max-width: 379px) { .presets { gap: 6px; } .preset { padding-left: 0; padding-right: 0; font-size: 12px; letter-spacing: -0.01em; } }
 
@@ -461,6 +463,7 @@ function drawSounds(s) {
     if ($("search").hidden) $("search").value = "";
     filter();
   }
+  $("tiles").classList.toggle("cable", s.cable === true);
   const playing = new Set(list.filter((x) => x.playing).map((x) => String(x.id)));
   const now = Date.now();
   for (const b of $("tiles").children) {
@@ -479,7 +482,7 @@ function mark(tile, playing) {
 }
 
 // Stop all's rim lights while a sound is going into the call.
-const lightStop = () => $("stop").classList.toggle("lit", $("tiles").querySelector(".tile.playing") !== null);
+const lightStop = () => $("stop").classList.toggle("lit", state.cable === true && $("tiles").querySelector(".tile.playing") !== null);
 
 function filter() {
   const q = $("search").value.trim().toLowerCase();
@@ -505,9 +508,10 @@ function drawVoice(s) {
     }));
   }
   for (const b of presets.children) check(b, b.dataset.id === s.preset);
-  presets.classList.toggle("off", !s.effect);
+  presets.classList.toggle("live", s.live === true);
   const name = (s.presets.find((p) => p.id === s.preset) || {}).name || "";
   $("effect").classList.toggle("on", s.effect);
+  $("effect").classList.toggle("live", s.live === true);
   $("effect").setAttribute("aria-checked", String(s.effect));
   $("effect-says").textContent = s.effect ? name + " voice" : "Off: people hear your own voice";
   slider("mic-gain", s.mic_gain, s.mic_gain_label, true);
@@ -581,6 +585,8 @@ flip($("monitor"), "monitor");
 $("effect").onclick = () => {
   const on = !state.effect;
   state.effect = on;
+  // Lit again once the PC says the changed voice is going out.
+  state.live = false;
   drawVoice(state);
   act({ do: "effect", on });
 };
