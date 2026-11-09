@@ -671,6 +671,7 @@ fn scene(rt: &mut Runtime<State>, name: &str) {
 fn only_audio_going_into_the_call_lights_the_led() {
     let mut rt = app();
     scene(&mut rt, "voice");
+    assert!(rt.state.voice_live());
     let on = lit(&rt);
     assert!(
         !on.is_empty(),
@@ -680,6 +681,7 @@ fn only_audio_going_into_the_call_lights_the_led() {
 
     rt.update(|s, _| s.set_effect(false));
     settle(&mut rt);
+    assert!(!rt.state.voice_live());
     assert_eq!(
         lit(&rt),
         Vec::<String>::new(),
@@ -711,8 +713,42 @@ fn only_audio_going_into_the_call_lights_the_led() {
         }
         rt.update(|s, _| s.set_tab(Tab::Voice));
         settle(&mut rt);
-        assert!(rt.state.settings.effect);
+        assert!(rt.state.settings.effect && !rt.state.voice_live(), "{name}");
         assert_eq!(lit(&rt), Vec::<String>::new(), "{name}");
+    }
+
+    // Sounds go into the call through VB-CABLE, even while the mic has a problem. With no
+    // cable they play only in the headphones: the pad keeps its playing mark and Stop all
+    // still stops them, but nothing lights.
+    for (name, reaches_call) in [("audio-problem", true), ("no-cable", false)] {
+        let mut rt = app();
+        scene(&mut rt, "soundboard");
+        scene(&mut rt, name);
+        let id = rt.state.sounds[0].id;
+        rt.update(move |s, _| {
+            s.set_tab(Tab::Soundboard);
+            s.play(id);
+        });
+        settle(&mut rt);
+        assert!(!rt.state.status.running, "{name}");
+        assert_eq!(rt.state.cable_open(), reaches_call, "{name}");
+        let pad = format!("/sound-{}", id.0);
+        let on = lit(&rt);
+        assert_eq!(!on.is_empty(), reaches_call, "{name}: {on:?}");
+        assert!(on.iter().all(|p| p.contains("/sound-")), "{name}: {on:?}");
+        let tile = a11y_node(&rt, &pad[1..]);
+        let says = format!("Play {} (playing)", rt.state.sounds[0].name);
+        assert_eq!(tile["name"], says.as_str(), "{name}");
+        let marks = rt
+            .elements()
+            .into_iter()
+            .filter(|e| e.path.contains(&format!("{pad}/")) && e.role == "icon" && e.opacity > 0.5);
+        assert!(marks.count() > 0, "{name}: the playing mark shows");
+        let stop = a11y_node(&rt, "stop-all");
+        let disabled = stop["states"]
+            .as_array()
+            .is_some_and(|s| s.contains(&"disabled".into()));
+        assert!(!disabled, "{name}: Stop all still stops them");
     }
 }
 

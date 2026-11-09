@@ -347,6 +347,20 @@ impl State {
         }
     }
 
+    /// The changed voice is going into the call: the effect is on and the mic → cable path
+    /// runs. Only then do the footswitch and the chosen voice light, in the window and on
+    /// the phone.
+    pub fn voice_live(&self) -> bool {
+        self.settings.effect && self.status.running
+    }
+
+    /// VB-CABLE is open, so a playing sound reaches the call; only then do a playing pad and
+    /// Stop all light. Not `running`: with the mic failed but the cable open, sounds still go
+    /// out. With no cable they play only in the headphones.
+    pub fn cable_open(&self) -> bool {
+        self.status.cable_name.is_some()
+    }
+
     pub fn is_playing(&self, id: SoundId) -> bool {
         self.status.playing.contains(&id)
     }

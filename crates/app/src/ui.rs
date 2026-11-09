@@ -118,8 +118,8 @@ pub(crate) fn fader_cap(k: &Kit, (w, h): (f32, f32), grip: (f32, f32)) -> El {
         .child(el().size(grip.0, grip.1).fill(tone(0.3)))
 }
 /// The LED, the one colour that means "going into the call". It lights only for the mic
-/// going out (the Live dot), the voice effect and the chosen voice while it's on, a sound
-/// that's playing, and Stop all while one plays. Nothing that stays on this PC (Trim, a
+/// going out (the Live dot), the voice effect and the chosen voice while the changed voice
+/// goes out, a sound playing into the call, and Stop all while one does. Nothing that stays on this PC (Trim, a
 /// preview, Hear yourself, a selection, a sound just added) uses it.
 pub(crate) fn led() -> Color {
     oklch(0.72, 0.18, 42.0)
@@ -849,7 +849,7 @@ fn effect_card(s: &State, k: &Kit) -> El {
     let on = s.settings.effect;
     // Lit only while the changed voice really goes out: not while the engine is starting,
     // can't find VB-CABLE or has an audio problem.
-    let live = on && s.status.running;
+    let live = s.voice_live();
     let detail = if on {
         format!("{} voice", s.settings.preset().name())
     } else {
@@ -957,7 +957,7 @@ fn footswitch(k: &Kit, on: bool, live: bool) -> El {
 }
 
 fn preset_grid(s: &State, k: &Kit) -> El {
-    let (live, current) = (s.settings.effect && s.status.running, s.settings.preset());
+    let (live, current) = (s.voice_live(), s.settings.preset());
     let mut grid = el()
         .key("presets")
         .w_full()
@@ -1277,7 +1277,7 @@ fn soundboard(s: &State, cx: &mut Cx<State>, k: &Kit, layer: &mut Vec<El>) -> El
         .on_press(|s: &mut State| s.stop_sounds())
         .build(k);
     let mut stop = as_key(stop).key("stop-all");
-    if any_playing {
+    if any_playing && s.cable_open() {
         stop =
             stop.border(1.0, wash(led(), Color::WHITE, 0.1))
                 .shadow(0.0, 12.0, led().alpha(0.35));
@@ -1392,11 +1392,13 @@ fn add_button(k: &Kit, main: bool) -> El {
 }
 
 /// A sound on a pad: its number (the key you press, for the first nine) and its name. While
-/// it plays the pad lights up. Pressed, it plays. Trim and Remove show in its top corner
+/// it plays the pad is latched with a playing mark, and lit while the sound goes into the
+/// call (see [`State::cable_open`]). Pressed, it plays. Trim and Remove show in its top corner
 /// while the pointer is on it, and its context menu (right-click, the Menu key or
 /// Shift+F10) offers both from the keyboard.
 fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) -> El {
     let (id, playing) = (sound.id, s.is_playing(sound.id));
+    let lit = playing && s.cable_open();
     // Hover-only, so Tab skips them: the context menu is the keyboard's way in.
     let action = |glyph: &'static Icon, key: String, label: String, help: &str| {
         IconButton::new(glyph)
@@ -1452,9 +1454,14 @@ fn sound_tile(s: &State, k: &Kit, layer: &mut Vec<El>, i: usize, sound: &Sound) 
             .center_y()
             .group_opacity(1.0, 0.0)
             .child(icon(&PLAYING, ICON).color(k.c.text_base))
-            .child(led_dot(true))
+            .children(lit.then(|| led_dot(true)))
     });
-    let mut tile = raise(col(), if playing { Lamp::Lit } else { Lamp::Off })
+    let light = match (lit, playing) {
+        (true, _) => Lamp::Lit,
+        (false, true) => Lamp::Latched,
+        _ => Lamp::Off,
+    };
+    let mut tile = raise(col(), light)
         .key(format!("sound-{}", id.0))
         .role("button")
         .label(if playing {
