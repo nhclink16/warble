@@ -24,28 +24,27 @@ pub const MOUSE_5: Vk = 0x06;
 pub const ESCAPE: Vk = 0x1B;
 
 /// The name Warble shows for a key it takes, or `None` for one it doesn't: the left and right
-/// mouse buttons (they work the window), Escape (it cancels), the Windows keys, and codes with
-/// no key. Shift, Ctrl and Alt are taken by side, as "Left Ctrl". Punctuation is named as on a
-/// US keyboard.
+/// mouse buttons (they work the window), Escape (it cancels), the Windows keys, Pause (Windows
+/// lets it go as soon as it's pressed, so it can't be held), and codes with no key. Shift, Ctrl
+/// and Alt are taken by side, as "Left Ctrl". Punctuation is named as on a US keyboard.
 pub fn name(vk: Vk) -> Option<String> {
     let named = match vk {
-        MIDDLE_MOUSE => "Middle mouse",
+        MIDDLE_MOUSE => "Middle Mouse",
         MOUSE_4 => "Mouse 4",
         MOUSE_5 => "Mouse 5",
         0x08 => "Backspace",
         0x09 => "Tab",
         0x0D => "Enter",
-        0x13 => "Pause",
         0x14 => "Caps Lock",
         0x20 => "Space",
         0x21 => "Page Up",
         0x22 => "Page Down",
         0x23 => "End",
         0x24 => "Home",
-        0x25 => "Left arrow",
-        0x26 => "Up arrow",
-        0x27 => "Right arrow",
-        0x28 => "Down arrow",
+        0x25 => "Left Arrow",
+        0x26 => "Up Arrow",
+        0x27 => "Right Arrow",
+        0x28 => "Down Arrow",
         0x2D => "Insert",
         0x2E => "Delete",
         0x30..=0x39 | 0x41..=0x5A => return Some(char::from(vk as u8).to_string()),
@@ -231,7 +230,7 @@ mod tests {
         for (vk, says) in [
             (MOUSE_4, "Mouse 4"),
             (MOUSE_5, "Mouse 5"),
-            (MIDDLE_MOUSE, "Middle mouse"),
+            (MIDDLE_MOUSE, "Middle Mouse"),
             (0x56, "V"),
             (0x14, "Caps Lock"),
             (0x37, "7"),
@@ -244,8 +243,8 @@ mod tests {
             assert_eq!(name(vk).as_deref(), Some(says));
         }
         // Left and right click work the window; Ctrl and the Windows key are taken by side or
-        // not at all; Escape stops choosing.
-        for vk in [0x01, 0x02, 0x11, 0x5B, 0xFF] {
+        // not at all; Pause can't be held; Escape stops choosing.
+        for vk in [0x01, 0x02, 0x11, 0x13, 0x5B, 0xFF] {
             assert_eq!(pick(vk), Pick::Skip, "{vk:#x}");
         }
         assert_eq!(pick(ESCAPE), Pick::Cancel);

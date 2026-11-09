@@ -1319,7 +1319,7 @@ fn push_to_talk_is_set_up_and_its_key_changed_from_the_keyboard() {
     // The other side button, the middle one and keys can be the key too.
     for (vk, name) in [
         (ptt::MOUSE_5, "Mouse 5"),
-        (ptt::MIDDLE_MOUSE, "Middle mouse"),
+        (ptt::MIDDLE_MOUSE, "Middle Mouse"),
         (0x14, "Caps Lock"),
         (0x56, "V"),
     ] {
