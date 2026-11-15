@@ -414,9 +414,15 @@ fn a_newer_warble_is_offered_on_every_page_until_dismissed() {
         assert!(rt.find("update-now").is_some() && rt.find("dismiss-update").is_some());
     }
 
-    // While it downloads there's nothing to press, and the daily look doesn't reset it.
+    // While it downloads there's nothing to press, and the daily look doesn't reset it, even
+    // when it finds a newer one.
     rt.update(|s, _| s.update = Some(Offer::Downloading(release.clone())));
     rt.update(|s, _| s.offer_update(release.clone()));
+    let newer = Release {
+        version: "0.4.0".into(),
+        ..release.clone()
+    };
+    rt.update(|s, _| s.offer_update(newer));
     settle(&mut rt);
     assert_eq!(rt.state.update, Some(Offer::Downloading(release.clone())));
     assert_eq!(

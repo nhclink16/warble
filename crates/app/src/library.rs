@@ -130,7 +130,8 @@ fn say(fail: &Fail, site: Source) -> String {
 }
 
 /// One shared client: short timeouts, statuses as values. On Windows it uses the system's own
-/// TLS and certificate store.
+/// TLS and certificate store. A whole request, body included, gets ten minutes: room for
+/// yt-dlp or an update on a slow line, but a stalled download still ends.
 pub fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -138,6 +139,7 @@ pub fn agent() -> &'static ureq::Agent {
             .user_agent(concat!("Warble/", env!("CARGO_PKG_VERSION")))
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(20)))
+            .timeout_global(Some(Duration::from_secs(10 * 60)))
             .http_status_as_error(false);
         #[cfg(windows)]
         let config = config.tls_config(

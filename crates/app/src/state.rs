@@ -702,12 +702,14 @@ impl State {
         });
     }
 
-    /// Offers `release` above the pages, unless it's already offered or downloading.
+    /// Offers `release` above the pages, unless it's already offered. While an update
+    /// downloads, a newer one waits for the next look: it would start a second download.
     pub fn offer_update(&mut self, release: Release) {
-        if self
-            .update
-            .as_ref()
-            .is_some_and(|o| o.release() == &release)
+        if matches!(self.update, Some(Offer::Downloading(_)))
+            || self
+                .update
+                .as_ref()
+                .is_some_and(|o| o.release() == &release)
         {
             return;
         }
