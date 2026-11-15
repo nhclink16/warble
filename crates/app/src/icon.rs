@@ -1,6 +1,6 @@
 //! Warble's icon, drawn in code: a rounded square in the app's LED orange with five dark
 //! waveform bars. The tray, the phone's home screen and (on Windows) the window, taskbar and
-//! Start menu shortcut use it.
+//! Start menu shortcut use it. On Windows the window's title bar takes the app's colours too.
 
 /// The LED's orange, `ui::led()` (oklch(0.72 0.18 42)), in sRGB: #fe773d.
 const LED: [f32; 3] = [254.0, 119.0, 61.0];
@@ -64,20 +64,30 @@ fn in_bars(u: f32, v: f32, size: u32) -> bool {
     })
 }
 
-/// Sets the window's title bar and taskbar icon.
+/// The window's Win32 handle.
+#[cfg(windows)]
+fn hwnd(window: &rune::WindowHandle) -> Option<isize> {
+    use rune::raw_window_handle::RawWindowHandle;
+    window
+        .with_raw_handle(|h| match h.as_raw() {
+            RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
+            _ => None,
+        })
+        .ok()
+        .flatten()
+}
+
+/// Sets the window's title bar and taskbar icon, and colours the title bar like the app.
 #[cfg(windows)]
 pub fn set_window_icon(window: &rune::WindowHandle) {
-    use rune::raw_window_handle::RawWindowHandle;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateIcon, ICON_BIG, ICON_SMALL, SendMessageW, WM_SETICON,
     };
 
-    let Ok(Some(hwnd)) = window.with_raw_handle(|h| match h.as_raw() {
-        RawWindowHandle::Win32(w) => Some(w.hwnd.get()),
-        _ => None,
-    }) else {
+    let Some(hwnd) = hwnd(window) else {
         return;
     };
+    paint_title_bar(hwnd);
     for (kind, size) in [(ICON_BIG, 48), (ICON_SMALL, 16)] {
         let mut bgra = rgba(size);
         let mut mask = Vec::with_capacity(bgra.len() / 4);
@@ -102,6 +112,39 @@ pub fn set_window_icon(window: &rune::WindowHandle) {
             }
         }
     }
+}
+
+/// The title bar in the app's graphite, with its words in the app's ink and a border to match,
+/// so it reads as part of the window. Windows keeps drawing the buttons, and the window still
+/// snaps and drags as usual. Windows 10 ignores the colours and takes only the dark bar.
+#[cfg(windows)]
+fn paint_title_bar(hwnd: isize) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+        DwmSetWindowAttribute,
+    };
+
+    let k = crate::ui::kit();
+    // A COLORREF: 0x00bbggrr, in sRGB.
+    let colorref = |c: rune::Color| {
+        let enc = |v: f32| (rune::color::srgb_encode(v) * 255.0).round() as u32;
+        enc(c.r) | enc(c.g) << 8 | enc(c.b) << 16
+    };
+    let set = |attribute: i32, value: u32| {
+        // SAFETY: `value` is a live u32, the size these attributes take, for the whole call.
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd as _,
+                attribute as u32,
+                (&raw const value).cast(),
+                size_of::<u32>() as u32,
+            );
+        }
+    };
+    set(DWMWA_USE_IMMERSIVE_DARK_MODE, 1);
+    set(DWMWA_CAPTION_COLOR, colorref(k.c.page));
+    set(DWMWA_BORDER_COLOR, colorref(k.c.page));
+    set(DWMWA_TEXT_COLOR, colorref(k.c.text_base));
 }
 
 #[cfg(test)]
