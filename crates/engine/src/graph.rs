@@ -63,6 +63,8 @@ pub(crate) struct Controls {
     // UI → audio.
     preset: AtomicU32,
     pub effect_enabled: AtomicBool,
+    /// Put the voice effect on the soundboard too (while the effect is on). Previews stay clean.
+    pub effect_on_sounds: AtomicBool,
     pub mic_gain: AtomicF32,
     pub monitor: AtomicBool,
     pub monitor_volume: AtomicF32,
@@ -90,6 +92,7 @@ impl Default for Controls {
         Controls {
             preset: AtomicU32::new(0),
             effect_enabled: AtomicBool::new(true),
+            effect_on_sounds: AtomicBool::new(false),
             mic_gain: AtomicF32::new(1.0),
             monitor: AtomicBool::new(false),
             monitor_volume: AtomicF32::new(0.8),
@@ -135,6 +138,12 @@ impl Controls {
         } else {
             0.0
         }
+    }
+
+    /// Whether the soundboard goes through the voice effect: the effect is on, and so is
+    /// "effect on sounds".
+    pub fn effect_on_sounds(&self) -> bool {
+        self.effect_enabled.load(Relaxed) && self.effect_on_sounds.load(Relaxed)
     }
 
     /// Whether push to talk lets the mic through: it's off, or its key is held.
@@ -530,8 +539,9 @@ impl Soundboard {
 }
 
 /// Mic → gain → push to talk → voice effect → + soundboard → soft limit → out (the call). The
-/// headphones get their own mix: the voice only while "hear yourself" is on, the soundboard while
-/// "hear sounds" is on, and a preview always. It goes to the monitor ring, or to `out` when the
+/// soundboard has its own copy of the voice effect, which passes it clean unless "effect on
+/// sounds" is on. The headphones get their own mix: the voice only while "hear yourself" is on,
+/// the soundboard while "hear sounds" is on, and a preview (always clean) always. It goes to the monitor ring, or to `out` when the
 /// master is the monitor (no cable).
 pub(crate) struct Graph {
     rate: f32,
@@ -542,6 +552,10 @@ pub(crate) struct Graph {
     voice: Voice,
     preset: Preset,
     effect_enabled: bool,
+    /// The voice effect for the soundboard: its own chains, so a sound never shares state with
+    /// the mic. It follows `preset`, and is on while `effect_on_sounds`.
+    sound_voice: Voice,
+    effect_on_sounds: bool,
     board: Soundboard,
     preview: Option<Preview>,
     master_is_monitor: bool,
@@ -561,7 +575,7 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    /// Allocates (the voice effect chains); call off the audio thread.
+    /// Allocates (both sets of voice effect chains); call off the audio thread.
     pub fn new(
         rate: u32,
         controls: Arc<Controls>,
@@ -575,6 +589,10 @@ impl Graph {
         let effect_enabled = controls.effect_enabled.load(Relaxed);
         voice.set_preset(preset);
         voice.set_enabled(effect_enabled);
+        let mut sound_voice = Voice::new(rate as f32);
+        let effect_on_sounds = controls.effect_on_sounds();
+        sound_voice.set_preset(preset);
+        sound_voice.set_enabled(effect_on_sounds);
         Graph {
             rate: rate.max(1) as f32,
             gain: controls.mic_gain.load().clamp(0.0, 4.0),
@@ -589,6 +607,8 @@ impl Graph {
             voice,
             preset,
             effect_enabled,
+            sound_voice,
+            effect_on_sounds,
             board: Soundboard::default(),
             preview: None,
             master_is_monitor,
@@ -627,11 +647,17 @@ impl Graph {
         if preset != self.preset {
             self.preset = preset;
             self.voice.set_preset(preset);
+            self.sound_voice.set_preset(preset);
         }
         let enabled = c.effect_enabled.load(Relaxed);
         if enabled != self.effect_enabled {
             self.effect_enabled = enabled;
             self.voice.set_enabled(enabled);
+        }
+        let on_sounds = c.effect_on_sounds();
+        if on_sounds != self.effect_on_sounds {
+            self.effect_on_sounds = on_sounds;
+            self.sound_voice.set_enabled(on_sounds);
         }
         let gain = c.mic_gain.load().clamp(0.0, 4.0);
         let (held, tail) = (c.mic_open(), (self.rate * TALK_TAIL_SECONDS) as usize);
@@ -664,6 +690,9 @@ impl Graph {
             let (sounds, heard) = (&mut self.sounds[..n], &mut self.heard[..n]);
             sounds.fill(0.0);
             self.board.mix(sounds, self.rate, sound_volume);
+            // Runs on silence too, so an echo or a cave rings out after a sound ends. Passes the
+            // sounds through untouched while the effect isn't on them.
+            self.sound_voice.process(sounds);
             if to_headphones {
                 heard.copy_from_slice(block);
                 ramp(heard, &mut self.heard_voice, heard_voice);
@@ -1147,6 +1176,53 @@ mod tests {
         graph.process(&mut call, 0.0);
         assert_eq!(controls.preview_at(), None);
         assert_eq!(Arc::strong_count(&clip), 1);
+    }
+
+    /// Play a 220 Hz tone (or preview it) with the Robot voice chosen, and return a block from
+    /// 3584 samples in, with the samples the clean tone has there.
+    fn render_robot(effect: bool, on_sounds: bool, preview: bool) -> (Vec<f32>, Vec<f32>) {
+        let tone: Vec<f32> = (0..48000)
+            .map(|i| 0.5 * (std::f32::consts::TAU * 220.0 * i as f32 / 48000.0).sin())
+            .collect();
+        let clean = tone[3584..4096].to_vec();
+        let controls = Arc::new(Controls::default());
+        controls.set_preset(Preset::Robot);
+        controls.effect_enabled.store(effect, Relaxed);
+        controls.effect_on_sounds.store(on_sounds, Relaxed);
+        controls.sound_volume.store(1.0);
+        let (mut tx, rx) = RingBuffer::new(64);
+        // The master is the headphones, so a preview is heard in `buf` too.
+        let mut graph = Graph::new(48000, controls, rx, None, None, true);
+        let clip = Arc::new(Sound {
+            samples: tone,
+            rate: 48000,
+        });
+        let command = if preview {
+            Command::Preview(clip, 0, 48000)
+        } else {
+            Command::Play(SoundId(1), clip)
+        };
+        tx.push(command).ok();
+        let mut buf = vec![0.0; 512];
+        for _ in 0..8 {
+            graph.process(&mut buf, 0.0);
+        }
+        (buf, clean)
+    }
+
+    #[test]
+    fn sounds_take_the_voice_effect_only_when_asked() {
+        let differs = |(buf, clean): (Vec<f32>, Vec<f32>)| {
+            buf.iter().zip(&clean).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()))
+        };
+        // Clean by default, whatever the voice is doing.
+        assert!(differs(render_robot(true, false, false)) < 1e-6);
+        // "Effect on sounds" puts the voice effect on them...
+        assert!(differs(render_robot(true, true, false)) > 0.1);
+        // ...but only while the effect is on.
+        assert!(differs(render_robot(false, true, false)) < 1e-6);
+        // A preview is for choosing a sound or a trim, so it stays clean.
+        assert!(differs(render_robot(true, true, true)) < 1e-6);
     }
 
     #[test]

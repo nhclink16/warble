@@ -209,6 +209,15 @@ impl Engine {
         }
     }
 
+    /// Put the voice effect on soundboard sounds too, while the effect is on. Off by default.
+    /// Previews in the headphones always play clean.
+    pub fn set_effect_on_sounds(&self, on: bool) {
+        match &self.inner {
+            Inner::Mock(m) => lock(m).effect_on_sounds = on,
+            Inner::Real(r) => r.controls().effect_on_sounds.store(on, Relaxed),
+        }
+    }
+
     /// Linear gain on the mic before effects, 0.0..=4.0.
     pub fn set_mic_gain(&self, gain: f32) {
         match &self.inner {
@@ -347,6 +356,7 @@ mod mock {
         pub config: Config,
         pub preset: Preset,
         pub effect_enabled: bool,
+        pub effect_on_sounds: bool,
         pub mic_gain: f32,
         pub monitor: bool,
         pub monitor_volume: f32,
@@ -367,6 +377,7 @@ mod mock {
                 config: Config::default(),
                 preset: Preset::Normal,
                 effect_enabled: true,
+                effect_on_sounds: false,
                 mic_gain: 1.0,
                 monitor: false,
                 monitor_volume: 0.8,
