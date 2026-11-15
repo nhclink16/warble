@@ -3,7 +3,8 @@
 A lightweight voice changer and soundboard for Discord calls and game chat on Windows.
 Built with Rust and [Rune](https://github.com/anomalyco/rune).
 
-- **Voice effects:** Normal, Deep, Chipmunk, Robot, Radio, Echo, Demon, Cave.
+- **Voice effects:** Normal, Deep, Chipmunk, Robot, Radio, Echo, Demon, Cave. Sounds play clean unless you
+  turn on *Put the effect on sounds too* on the *Voice* tab.
 - **Soundboard:** drop in WAV, MP3, OGG or FLAC sounds and play them into the call.
 - **Find sounds:** search Myinstants and Freesound from the *Soundboard* tab, preview a result in
   your headphones only, and add it. Freesound needs a free API key (<https://freesound.org/apiv2/apply>),
@@ -108,7 +109,7 @@ WARBLE_MOCK=1 cargo run -p warble -- --snap snaps/voice.png --scene voice   # he
 
 Scenes (`--list-scenes` prints them):
 
-- Voice: `voice` (the effect on), `voice-off`, `ptt` (push to talk on, its key up), `ptt-talking` (the key
+- Voice: `voice` (the effect on), `voice-off`, `voice-sounds` (the effect on sounds too), `ptt` (push to talk on, its key up), `ptt-talking` (the key
   held), `ptt-choose` (just turned on, waiting for a key). Push to talk is below the fold at 400x620; add
   `--size 400x1000` to see it.
 - Soundboard: `soundboard` (one sound playing), `soundboard-empty` (nine empty sockets), `removed` (just after

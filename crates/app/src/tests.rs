@@ -143,6 +143,27 @@ fn the_effect_row_and_its_switch_both_toggle_the_effect() {
 }
 
 #[test]
+fn the_effect_goes_on_sounds_only_when_its_switch_is_on() {
+    let mut rt = app();
+    assert!(
+        !rt.state.settings.effect_on_sounds,
+        "sounds play clean to start"
+    );
+    tap(&mut rt, "sounds-too-switch");
+    assert!(rt.state.settings.effect_on_sounds);
+    // A screen reader hears what it does, once.
+    let node = a11y_node(&rt, "sounds-too-switch");
+    assert_eq!(node["name"], "Put the effect on sounds too");
+    let named = a11y(&rt)
+        .into_iter()
+        .filter(|n| n["name"] == "Put the effect on sounds too")
+        .count();
+    assert_eq!(named, 1, "the printed line is hidden from it");
+    tap(&mut rt, "sounds-too-switch");
+    assert!(!rt.state.settings.effect_on_sounds);
+}
+
+#[test]
 fn the_tabs_switch_pages() {
     let mut rt = app();
     assert!(rt.find("presets").is_some());

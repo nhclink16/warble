@@ -998,11 +998,44 @@ fn preset_grid(s: &State, k: &Kit) -> El {
     for (i, p) in Preset::ALL.into_iter().enumerate() {
         grid = grid.child(preset_tile(k, p, i, p == current, live));
     }
-    col().w_full().gap(10.0).child(grid).child(
-        text("Ctrl+Alt+1 to 8 picks a voice.")
-            .font(SMALL)
-            .color(k.c.text_muted),
-    )
+    col()
+        .w_full()
+        .gap(10.0)
+        .child(grid)
+        .child(
+            text("Ctrl+Alt+1 to 8 picks a voice.")
+                .font(SMALL)
+                .color(k.c.text_muted),
+        )
+        .child(sounds_too(s, k))
+}
+
+/// Put the voice effect on soundboard sounds as well as your voice.
+fn sounds_too(s: &State, k: &Kit) -> El {
+    const SAYS: &str = "Put the effect on sounds too";
+    row()
+        .w_full()
+        .h(22.0)
+        .gap(GAP)
+        .center_y()
+        .child(
+            text(SAYS)
+                .font(LABEL)
+                .color(k.c.text_muted)
+                .grow(1.0)
+                .shrink()
+                .truncate()
+                .a11y_hidden(),
+        )
+        .child(
+            Switch::new(s.settings.effect_on_sounds)
+                .label(SAYS)
+                .hide_label()
+                .control_size(ControlSize::Small)
+                .on_toggle(|s: &mut State| s.set_effect_on_sounds(!s.settings.effect_on_sounds))
+                .build(k)
+                .key("sounds-too-switch"),
+        )
 }
 
 /// A voice on a pad, numbered for its hotkey. The chosen one is latched, and lit while
@@ -2286,6 +2319,10 @@ pub const SCENES: &[Scene] = &[
     ("voice-off", |s| {
         s.select_preset(Preset::Robot);
         s.set_effect(false);
+    }),
+    ("voice-sounds", |s| {
+        s.select_preset(Preset::Deep);
+        s.set_effect_on_sounds(true);
     }),
     ("soundboard", |s| {
         s.add_sounds(

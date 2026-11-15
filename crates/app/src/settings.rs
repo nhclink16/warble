@@ -22,6 +22,8 @@ pub struct Settings {
     /// `Preset::id`.
     pub preset: String,
     pub effect: bool,
+    /// Put the voice effect on soundboard sounds too. Off until it's turned on, on the Voice tab.
+    pub effect_on_sounds: bool,
     /// Linear, 0.25..=4.0.
     pub mic_gain: f32,
     pub monitor: bool,
@@ -50,6 +52,7 @@ impl Default for Settings {
             headphones: None,
             preset: Preset::Normal.id().into(),
             effect: true,
+            effect_on_sounds: false,
             mic_gain: 1.0,
             monitor: false,
             monitor_volume: 0.8,
@@ -249,6 +252,7 @@ mod tests {
             cable: Some("CABLE".into()),
             push_to_talk: true,
             talk_key: Some(crate::ptt::MOUSE_4),
+            effect_on_sounds: true,
             ..Default::default()
         };
         s.save(&dir).unwrap();
@@ -264,6 +268,7 @@ mod tests {
             (Preset::Normal, 4.0, true)
         );
         assert_eq!((s.push_to_talk, s.talk_key), (false, None), "an older file");
+        assert!(!s.effect_on_sounds, "sounds stay clean in an older file");
         // The left mouse button can't be the key, so push to talk stays off.
         std::fs::write(
             dir.join("settings.json"),

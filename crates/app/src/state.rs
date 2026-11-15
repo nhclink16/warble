@@ -195,6 +195,7 @@ impl State {
     fn with(engine: Engine, settings: Settings, dir: Option<PathBuf>) -> State {
         engine.set_preset(settings.preset());
         engine.set_effect_enabled(settings.effect);
+        engine.set_effect_on_sounds(settings.effect_on_sounds);
         engine.set_mic_gain(settings.mic_gain);
         engine.set_monitor(settings.monitor);
         engine.set_monitor_volume(settings.monitor_volume);
@@ -553,6 +554,12 @@ impl State {
     pub fn set_sound_volume(&mut self, volume: f32) {
         self.settings.sound_volume = volume.clamp(0.0, 1.0);
         self.engine.set_sound_volume(self.settings.sound_volume);
+        self.changed();
+    }
+
+    pub fn set_effect_on_sounds(&mut self, on: bool) {
+        self.settings.effect_on_sounds = on;
+        self.engine.set_effect_on_sounds(on);
         self.changed();
     }
 
