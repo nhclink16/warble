@@ -1,4 +1,4 @@
-//! Audio from a YouTube or X link through yt-dlp, which Warble downloads on first use (from its
+//! Audio from a YouTube, X or Instagram link through yt-dlp, which Warble downloads on first use (from its
 //! official GitHub releases) into its own `bin` folder and keeps up to date. Everything here
 //! blocks, so the app calls it from a worker thread.
 
@@ -91,12 +91,15 @@ fn command(tool: &Path) -> Command {
 pub const FORMAT: &str =
     "bestaudio[ext=m4a]/bestaudio[ext=mp4]/best[ext=mp4][height<=720]/best[ext=mp4]/bestaudio";
 
-/// What yt-dlp is asked to do: the audio (see `FORMAT`) of one video (not its playlist), at most
-/// `MAX_SECONDS` long and not live, saved in `out` under its id. It prints the saved file's
-/// path, then the title.
+/// What yt-dlp is asked to do: the audio (see `FORMAT`) of one video (not its playlist, and only
+/// the first of a post's videos), not live and at most `MAX_SECONDS` long, saved in `out` under
+/// its id. Instagram doesn't say how long a reel is, so an unknown length passes here and
+/// `Clip::decode` holds the limit. It prints the saved file's path, then the title.
 pub fn args(url: &str, out: &Path) -> Vec<String> {
     vec![
         "--no-playlist".into(),
+        "--playlist-items".into(),
+        "1".into(),
         "--no-progress".into(),
         "--no-warnings".into(),
         "--encoding".into(),
@@ -104,7 +107,7 @@ pub fn args(url: &str, out: &Path) -> Vec<String> {
         "-f".into(),
         FORMAT.into(),
         "--match-filter".into(),
-        format!("duration <= {MAX_SECONDS} & !is_live"),
+        format!("duration <=? {MAX_SECONDS} & !is_live"),
         "-o".into(),
         out.join("%(id)s.%(ext)s").to_string_lossy().into_owned(),
         "--print".into(),
@@ -175,8 +178,9 @@ fn plain_error(stderr: &str) -> String {
     let e = stderr.to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
     if has(&["unsupported url", "is not a valid url"]) {
-        "Warble can’t get audio from that link. Paste a link to a YouTube or X video.".into()
-    } else if has(&["no video could be found"]) {
+        "Warble can’t get audio from that link. Paste a link to a YouTube, X or Instagram video."
+            .into()
+    } else if has(&["no video could be found", "no video in this post"]) {
         "That post has no video. Paste a link to a post with one.".into()
     } else if has(&[
         "nsfw tweet requires authentication",
@@ -184,6 +188,11 @@ fn plain_error(stderr: &str) -> String {
         "you are not authorized",
     ]) {
         format!("That post needs a signed-in X account. Instead, {DROP_IT}")
+    } else if has(&[
+        "empty media response",
+        "rate-limit for accessing posts anonymously",
+    ]) {
+        format!("Instagram won’t share that post right now. Try again later, or {DROP_IT}")
     } else if has(&["could not retrieve guest token"]) {
         format!("X is blocking downloads right now. Try again later, or {DROP_IT}")
     } else if has(&[
@@ -192,11 +201,12 @@ fn plain_error(stderr: &str) -> String {
         "no longer exists",
     ]) {
         "That post isn’t available. Check the link.".into()
-    } else if has(&["private video"]) {
+    } else if has(&["private video", "registered users who follow"]) {
         "That video is private. Try another video.".into()
     } else if has(&[
         "confirm your age",
         "age-restricted",
+        "restricted video",
         "inappropriate for some users",
     ]) {
         format!("That video is age-restricted. Instead, {DROP_IT}")
@@ -244,7 +254,9 @@ mod tests {
             FORMAT.contains("/best[ext=mp4]"),
             "X posts with only whole videos"
         );
-        assert_eq!(after("--match-filter"), "duration <= 1200 & !is_live");
+        // Instagram gives no length, so a missing one passes (decoding holds the limit).
+        assert_eq!(after("--match-filter"), "duration <=? 1200 & !is_live");
+        assert_eq!(after("--playlist-items"), "1", "a post's first video only");
         assert_eq!(after("-o"), out.join("%(id)s.%(ext)s").to_string_lossy());
         assert!(args.contains(&"--no-playlist".to_string()));
         let prints: Vec<&String> = args
@@ -281,7 +293,28 @@ mod tests {
         );
         assert_eq!(
             plain_error("ERROR: Unsupported URL: https://example.com/"),
-            "Warble can’t get audio from that link. Paste a link to a YouTube or X video."
+            "Warble can’t get audio from that link. Paste a link to a YouTube, X or Instagram \
+             video."
+        );
+        assert_eq!(
+            plain_error(
+                "ERROR: [Instagram] BkfuX9UB-eK: Instagram sent an empty media response. Check if \
+                 this post is accessible in your browser without being logged-in."
+            ),
+            "Instagram won’t share that post right now. Try again later, or save the video as an \
+             MP4 and drop it on Warble’s window on your PC."
+        );
+        assert_eq!(
+            plain_error("ERROR: [Instagram] abc: There is no video in this post"),
+            "That post has no video. Paste a link to a post with one."
+        );
+        assert_eq!(
+            plain_error(
+                "ERROR: [Instagram] abc: This content is only available for registered users who \
+                 follow this account. Use --cookies-from-browser or --cookies for the \
+                 authentication."
+            ),
+            "That video is private. Try another video."
         );
         assert_eq!(
             plain_error("ERROR: [twitter] 123: No video could be found in this tweet"),
@@ -312,6 +345,11 @@ mod tests {
             "no video could be found",
             "protected tweet",
             "could not retrieve guest token",
+            "empty media response",
+            "rate-limit for accessing posts anonymously",
+            "no video in this post",
+            "registered users who follow",
+            "restricted video",
             "no longer exists",
             "private video",
             "age-restricted",
@@ -356,6 +394,25 @@ mod tests {
         let back = warble_engine::Clip::decode(&saved, 300).unwrap();
         assert!((back.seconds() - 2.0).abs() < 0.01, "{}", back.seconds());
         eprintln!("saved {}", saved.display());
+    }
+
+    /// Live: a public Instagram reel's audio. Instagram gives no length, which mustn't read as too
+    /// long. `cargo test -p warble -- --ignored live_instagram`. Shares the yt-dlp
+    /// `live_youtube_fetch_trim_and_save` downloads.
+    #[test]
+    #[ignore = "needs the internet and runs yt-dlp"]
+    fn live_instagram_reel_audio_decodes() {
+        let dir = std::env::temp_dir().join("warble-live-youtube");
+        if !tool_path(&dir).is_file() {
+            install(&dir).expect("installs yt-dlp");
+        }
+        let out = dir.join("out-instagram");
+        let (file, title) =
+            fetch(&dir, "https://www.instagram.com/reels/Cop84x6u7CP/", &out).expect("fetches");
+        eprintln!("{title}: {}", file.display());
+        let clip = warble_engine::Clip::decode(&file, MAX_SECONDS).expect("decodes");
+        eprintln!("{:.1} s at {} Hz", clip.seconds(), clip.rate());
+        assert!(clip.seconds() > 10.0);
     }
 
     /// Live: an X post's audio, through `FORMAT` (its audio-only stream), and through the
