@@ -556,6 +556,9 @@ pub(crate) struct Graph {
     /// the mic. It follows `preset`, and is on while `effect_on_sounds`.
     sound_voice: Voice,
     effect_on_sounds: bool,
+    /// Stop all was pressed and nothing has played since. Stop all is the panic button, so the
+    /// soundboard's effect fades to dry (over 20 ms) rather than let an echo or cave ring on.
+    hushed: bool,
     board: Soundboard,
     preview: Option<Preview>,
     master_is_monitor: bool,
@@ -609,6 +612,7 @@ impl Graph {
             effect_enabled,
             sound_voice,
             effect_on_sounds,
+            hushed: false,
             board: Soundboard::default(),
             preview: None,
             master_is_monitor,
@@ -639,7 +643,14 @@ impl Graph {
                     })
                 }
                 Command::StopPreview => self.preview = None,
-                command => self.board.apply(command),
+                command => {
+                    match command {
+                        Command::StopAll => self.hushed = true,
+                        Command::Play(..) => self.hushed = false,
+                        _ => {}
+                    }
+                    self.board.apply(command)
+                }
             }
         }
         let c = &*self.controls;
@@ -654,7 +665,7 @@ impl Graph {
             self.effect_enabled = enabled;
             self.voice.set_enabled(enabled);
         }
-        let on_sounds = c.effect_on_sounds();
+        let on_sounds = c.effect_on_sounds() && !self.hushed;
         if on_sounds != self.effect_on_sounds {
             self.effect_on_sounds = on_sounds;
             self.sound_voice.set_enabled(on_sounds);
@@ -1191,8 +1202,8 @@ mod tests {
         controls.effect_on_sounds.store(on_sounds, Relaxed);
         controls.sound_volume.store(1.0);
         let (mut tx, rx) = RingBuffer::new(64);
-        // The master is the headphones, so a preview is heard in `buf` too.
-        let mut graph = Graph::new(48000, controls, rx, None, None, true);
+        // `buf` is the call, or for a preview (heard only in the headphones) the headphones.
+        let mut graph = Graph::new(48000, controls, rx, None, None, preview);
         let clip = Arc::new(Sound {
             samples: tone,
             rate: 48000,
@@ -1225,6 +1236,36 @@ mod tests {
         assert!(differs(render_robot(false, true, false)) < 1e-6);
         // A preview is for choosing a sound or a trim, so it stays clean.
         assert!(differs(render_robot(true, true, true)) < 1e-6);
+    }
+
+    #[test]
+    fn stop_all_cuts_the_effects_tail_from_the_call() {
+        let controls = Arc::new(Controls::default());
+        controls.set_preset(Preset::Cave);
+        controls.effect_on_sounds.store(true, Relaxed);
+        controls.sound_volume.store(1.0);
+        let (mut tx, rx) = RingBuffer::new(64);
+        let mut graph = Graph::new(48000, controls, rx, None, None, false);
+        let clip = sound(0.25, 48000, 48000);
+        tx.push(Command::Play(SoundId(1), clip.clone())).ok();
+        let mut call = vec![0.0; 480];
+        for _ in 0..50 {
+            graph.process(&mut call, 0.0);
+        }
+        let changed = |call: &[f32]| call.iter().any(|s| (s - 0.25).abs() > 0.01);
+        assert!(changed(&call), "the sound has the effect");
+        tx.push(Command::StopAll).ok();
+        // 30 ms on, past the effect's 20 ms fade, the call is silent: no cave rings on.
+        for _ in 0..3 {
+            graph.process(&mut call, 0.0);
+        }
+        assert!(call.iter().all(|s| s.abs() < 1e-6), "peak {}", peak(&call));
+        // The next sound has the effect again.
+        tx.push(Command::Play(SoundId(1), clip)).ok();
+        for _ in 0..10 {
+            graph.process(&mut call, 0.0);
+        }
+        assert!(changed(&call));
     }
 
     #[test]
