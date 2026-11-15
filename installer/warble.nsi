@@ -7,6 +7,9 @@
 ;   makensis -DEXE=/path/to/warble.exe installer/warble.nsi
 ; Either way it writes target/Warble-Setup-<version>.exe (or -DOUT=...).
 ;
+; `Warble-Setup.exe /S` installs without asking; add /run to open Warble afterwards, as
+; Warble's own updates do.
+;
 ; It installs for the current user only, with no admin prompt, into
 ; %LOCALAPPDATA%\Programs\Warble: the folder scripts/install.ps1 uses, so it updates either kind
 ; of install in place. Settings and sounds live in %APPDATA%\Warble; neither installing nor
@@ -145,6 +148,14 @@ Section "Warble"
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" $0
+
+  ; Warble's own updates run this silently with /run, so the new Warble opens once it's in.
+  ${GetParameters} $0
+  ClearErrors
+  ${GetOptions} $0 "/run" $1
+  ${IfNot} ${Errors}
+    Exec '"$INSTDIR\warble.exe"'
+  ${EndIf}
 SectionEnd
 
 Section "Uninstall"

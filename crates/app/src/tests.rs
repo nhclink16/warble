@@ -8,8 +8,9 @@ use warble_engine::{Clip, Preset};
 use crate::find::YouTube;
 use crate::ptt;
 use crate::settings::HOLD_DIR;
-use crate::state::{REMOVAL_NEWS, REMOVE_SETTLE, State, Tab};
+use crate::state::{Offer, REMOVAL_NEWS, REMOVE_SETTLE, State, Tab};
 use crate::ui::{self, PAD};
+use crate::update::Release;
 
 fn app() -> Runtime<State> {
     let mut rt = Runtime::new(State::mock(), ui::view, (400.0, 620.0), Env::new(true, 1.0));
@@ -379,6 +380,70 @@ fn a_removal_is_for_good_once_dismissed_or_followed_and_outlasts_a_notice() {
     assert!(rt.state.removed.is_none() && holding(&rt).is_empty());
     assert!(std::fs::read_dir(sounds_dir(&rt)).unwrap().next().is_none());
     assert!(original.exists(), "the user's own file is never touched");
+}
+
+#[test]
+fn a_newer_warble_is_offered_on_every_page_until_dismissed() {
+    let mut rt = app();
+    let release = Release {
+        version: "0.3.0".into(),
+        url: "https://github.com/nhclink16/warble/releases/download/v0.3.0/Warble-Setup-0.3.0.exe"
+            .into(),
+        size: 7_336_499,
+    };
+    let row = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("update"))
+    };
+    assert!(row(&rt).is_none(), "nothing offered yet");
+
+    rt.update(|s, _| s.offer_update(release.clone()));
+    settle(&mut rt);
+    for tab in [Tab::Voice, Tab::Soundboard, Tab::Setup] {
+        rt.update(|s, _| s.tab = tab);
+        settle(&mut rt);
+        let line = row(&rt).unwrap_or_else(|| panic!("offered on {tab:?}"));
+        assert_eq!(
+            (line.role, line.label.as_deref()),
+            (
+                "status",
+                Some("Warble 0.3.0 is out. Updating restarts Warble. Update is next to it.")
+            )
+        );
+        assert!(rt.find("update-now").is_some() && rt.find("dismiss-update").is_some());
+    }
+
+    // While it downloads there's nothing to press, and the daily look doesn't reset it.
+    rt.update(|s, _| s.update = Some(Offer::Downloading(release.clone())));
+    rt.update(|s, _| s.offer_update(release.clone()));
+    settle(&mut rt);
+    assert_eq!(rt.state.update, Some(Offer::Downloading(release.clone())));
+    assert_eq!(
+        row(&rt).and_then(|e| e.label).as_deref(),
+        Some("Getting Warble 0.3.0…")
+    );
+    assert!(rt.find("update-now").is_none() && rt.find("dismiss-update").is_none());
+
+    // A failed download says why, as an alert, with Try again.
+    let why = "The update didn’t download. Check your internet, then try again.";
+    rt.update(|s, _| s.update = Some(Offer::Failed(release.clone(), why.into())));
+    settle(&mut rt);
+    let line = row(&rt).expect("the failure");
+    assert_eq!(
+        (line.role, line.label.as_deref()),
+        (
+            "alert",
+            Some(format!("{why} Try again is next to it.").as_str())
+        )
+    );
+
+    // Dismissed, it goes until the next look finds it again.
+    tap(&mut rt, "dismiss-update");
+    assert!(rt.state.update.is_none() && row(&rt).is_none());
+    rt.update(|s, _| s.offer_update(release));
+    settle(&mut rt);
+    assert!(row(&rt).is_some());
 }
 
 #[test]

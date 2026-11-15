@@ -15,6 +15,7 @@ mod settings;
 mod state;
 mod trim;
 mod ui;
+mod update;
 mod youtube;
 
 use rune::tray::{Tray, TrayEvent, TrayIcon, TraySpec};
@@ -63,6 +64,7 @@ fn main() {
             s.load_saved_sounds();
             s.sync_remote();
             s.sync_ptt();
+            s.watch_for_updates();
             s
         })
         .keep_running()

@@ -14,6 +14,7 @@ use crate::ptt::{self, Pick, Vk, Watch};
 use crate::remote::Remote;
 use crate::settings::{self, AUDIO_EXTS, Settings};
 use crate::trim::Trim;
+use crate::update::{self, Release};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -47,6 +48,22 @@ pub struct Removed {
     pub held: Option<PathBuf>,
     /// When it was removed.
     pub at: Instant,
+}
+
+/// A newer Warble on offer, and how updating to it is going.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Offer {
+    Ready(Release),
+    Downloading(Release),
+    Failed(Release, String),
+}
+
+impl Offer {
+    pub fn release(&self) -> &Release {
+        match self {
+            Offer::Ready(r) | Offer::Downloading(r) | Offer::Failed(r, _) => r,
+        }
+    }
 }
 
 /// Just after a removal the board ignores presses, so a double-click on × can't play or
@@ -139,6 +156,8 @@ pub struct State {
     /// The last sound removed, while it can be undone: until Dismiss, the next removal, or the
     /// next start. It shares the notice's place, and comes back once the notice is dismissed.
     pub removed: Option<Removed>,
+    /// A newer Warble, while it's offered above the pages.
+    pub update: Option<Offer>,
     pub open_picker: Option<Picker>,
     /// A sound tile's context menu (Trim, Remove), and where it opened.
     pub sound_menu: Option<(SoundId, PointerPress)>,
@@ -214,6 +233,7 @@ impl State {
             hotkey_failures: Vec::new(),
             notice: None,
             removed: None,
+            update: None,
             open_picker: None,
             sound_menu: None,
             drop_hover: false,
@@ -657,6 +677,71 @@ impl State {
         // load fails, it says so itself.
         self.notice = None;
         self.load_paths(vec![path], false);
+    }
+
+    /// Looks for a newer Warble a little after starting, then once a day, on its own thread.
+    /// Only the real app on Windows looks: the update is a Windows installer.
+    pub fn watch_for_updates(&self) {
+        let Some(h) = self.handle.clone() else {
+            return;
+        };
+        if !cfg!(windows) || self.headless || self.dir.is_none() {
+            return;
+        }
+        std::thread::spawn(move || {
+            std::thread::sleep(update::FIRST_LOOK);
+            loop {
+                if let Some(release) = update::check() {
+                    h.update(move |s, tx| {
+                        s.offer_update(release);
+                        tx.instant();
+                    });
+                }
+                std::thread::sleep(update::EVERY);
+            }
+        });
+    }
+
+    /// Offers `release` above the pages, unless it's already offered or downloading.
+    pub fn offer_update(&mut self, release: Release) {
+        if self
+            .update
+            .as_ref()
+            .is_some_and(|o| o.release() == &release)
+        {
+            return;
+        }
+        self.update = Some(Offer::Ready(release));
+    }
+
+    /// Downloads the offered release's installer, then hands over to it: it closes Warble,
+    /// installs the new one and opens it.
+    pub fn update_now(&mut self) {
+        let release = match &self.update {
+            Some(Offer::Ready(r) | Offer::Failed(r, _)) => r.clone(),
+            _ => return,
+        };
+        self.update = Some(Offer::Downloading(release.clone()));
+        let dir = std::env::temp_dir().join("warble-update");
+        let work = release.clone();
+        self.off_thread(
+            move || update::download(&work, &dir),
+            move |s, result| {
+                let started = result.and_then(|installer| {
+                    // The installer ends this Warble, so its settings are saved first.
+                    s.save_now();
+                    update::install(&installer)
+                });
+                match started {
+                    Ok(()) => {
+                        if let Some(h) = &s.handle {
+                            h.quit();
+                        }
+                    }
+                    Err(e) => s.update = Some(Offer::Failed(release, e)),
+                }
+            },
+        );
     }
 
     /// Makes the last removal permanent: its Undo goes and the holding folder is emptied.

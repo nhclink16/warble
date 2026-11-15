@@ -19,7 +19,8 @@ use crate::find_view;
 use crate::ptt;
 use crate::remote_view;
 use crate::settings::DROP_EXTS;
-use crate::state::{self, Picker, REMOVAL_NEWS, Removed, SEGMENTS, Sound, State, Tab};
+use crate::state::{self, Offer, Picker, REMOVAL_NEWS, Removed, SEGMENTS, Sound, State, Tab};
+use crate::update::Release;
 
 pub const VB_CABLE_URL: &str = "https://vb-audio.com/Cable/";
 
@@ -1798,13 +1799,13 @@ fn empty_state(k: &Kit) -> El {
 }
 
 /// The readouts under the tabs, the same on every page: a dismissable line about something
-/// that went wrong (a file that didn't load, say), and under it the Undo for a sound just
-/// removed, on the Soundboard's pages only. One place, so a screen reader hears each once
-/// whichever page shows; the Undo, added again on each return to the Soundboard, is read
-/// only while the removal is new (see [`REMOVAL_NEWS`]).
+/// that went wrong (a file that didn't load, say), under it the Undo for a sound just removed,
+/// on the Soundboard's pages only, and under that a newer Warble on offer. One place, so a
+/// screen reader hears each once whichever page shows; the Undo, added again on each return
+/// to the Soundboard, is read only while the removal is new (see [`REMOVAL_NEWS`]).
 fn notice(s: &State, k: &Kit) -> Option<El> {
     let removed = s.removed.as_ref().filter(|_| s.tab == Tab::Soundboard);
-    if s.notice.is_none() && removed.is_none() {
+    if s.notice.is_none() && removed.is_none() && s.update.is_none() {
         return None;
     }
     // Where keyboard focus goes when one is dismissed or undone: the page's first control.
@@ -1847,6 +1848,10 @@ fn notice(s: &State, k: &Kit) -> Option<El> {
             .child(dismiss(k, "dismiss-notice", |s: &mut State| s.notice = None).mt(2.0))
     });
     let removed = removed.map(|r| removed_row(k, r).focus_return(after));
+    let update = s
+        .update
+        .as_ref()
+        .map(|o| update_row(k, o).focus_return(after));
     // A long list of problems scrolls in its place rather than push the page off the window.
     Some(
         col()
@@ -1860,7 +1865,8 @@ fn notice(s: &State, k: &Kit) -> Option<El> {
                     .pb(10.0)
                     .gap(8.0)
                     .children(problem)
-                    .children(removed),
+                    .children(removed)
+                    .children(update),
             )),
     )
 }
@@ -1898,6 +1904,57 @@ fn removed_row(k: &Kit, r: &Removed) -> El {
         )
         .child(as_key(Button::new("Undo").on_press(State::undo_remove).build(k)).key("undo-remove"))
         .child(dismiss(k, "dismiss-removed", State::forget_removed))
+}
+
+/// The release the update scenes offer.
+fn scene_release() -> Release {
+    Release {
+        version: "0.3.0".into(),
+        url: "https://github.com/nhclink16/warble/releases/download/v0.3.0/Warble-Setup-0.3.0.exe"
+            .into(),
+        size: 7_336_499,
+    }
+}
+
+/// A newer Warble: Update gets it, and Warble restarts as the new one. While it downloads the
+/// line says so, with nothing to press; if it fails, Try again.
+fn update_row(k: &Kit, offer: &Offer) -> El {
+    let version = &offer.release().version;
+    let (says, button) = match offer {
+        Offer::Ready(_) => (
+            format!("Warble {version} is out. Updating restarts Warble."),
+            Some("Update"),
+        ),
+        Offer::Downloading(_) => (format!("Getting Warble {version}…"), None),
+        Offer::Failed(_, why) => (why.clone(), Some("Try again")),
+    };
+    let failed = matches!(offer, Offer::Failed(..));
+    let label = match button {
+        Some(b) => format!("{says} {b} is next to it."),
+        None => says.clone(),
+    };
+    readout(k)
+        .key("update")
+        .role(if failed { "alert" } else { "status" })
+        .label(label)
+        .live_region(LiveRegion::Polite)
+        .center_y()
+        .children(failed.then(|| icon(&WARNING, ICON).color(danger())))
+        .child(
+            text(says)
+                .font(SMALL)
+                .color(k.c.text_base)
+                .wrap()
+                .grow(1.0)
+                .shrink()
+                .a11y_hidden(),
+        )
+        .children(
+            button.map(|b| {
+                as_key(Button::new(b).on_press(State::update_now).build(k)).key("update-now")
+            }),
+        )
+        .children(button.map(|_| dismiss(k, "dismiss-update", |s: &mut State| s.update = None)))
 }
 
 // --- Setup ---
@@ -2319,6 +2376,16 @@ pub const SCENES: &[Scene] = &[
     ("voice-off", |s| {
         s.select_preset(Preset::Robot);
         s.set_effect(false);
+    }),
+    ("update", |s| s.offer_update(scene_release())),
+    ("update-getting", |s| {
+        s.update = Some(Offer::Downloading(scene_release()));
+    }),
+    ("update-failed", |s| {
+        s.update = Some(Offer::Failed(
+            scene_release(),
+            "The update didn’t download. Check your internet, then try again.".into(),
+        ));
     }),
     ("voice-sounds", |s| {
         s.select_preset(Preset::Deep);
