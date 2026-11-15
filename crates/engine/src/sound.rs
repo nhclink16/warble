@@ -1,11 +1,12 @@
-//! Soundboard clip decoding (symphonia): any WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC) file to
-//! mono `f32` at the file's own sample rate. Runs on the caller's thread.
+//! Soundboard clip decoding (symphonia): any WAV, MP3, OGG/Vorbis, FLAC or M4A (AAC, including
+//! HE-AAC's core) file to mono `f32` at the file's own sample rate. Runs on the caller's thread.
 
 use std::fs::File;
 use std::io::ErrorKind;
 use std::path::Path;
 
 use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
 use symphonia::core::errors::Error;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, TrackType};
@@ -67,13 +68,19 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
         .default_track(TrackType::Audio)
         .ok_or_else(no_audio)?;
     let track_id = track.id;
-    let params = track
+    let mut params = track
         .codec_params
         .as_ref()
         .and_then(|p| p.audio())
-        .ok_or_else(codec)?;
+        .ok_or_else(codec)?
+        .clone();
+    if params.codec == CODEC_ID_AAC
+        && let Some(core) = params.extra_data.as_deref().and_then(aac_lc_core)
+    {
+        params.extra_data = Some(core);
+    }
     let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(params, &AudioDecoderOptions::default())
+        .make_audio_decoder(&params, &AudioDecoderOptions::default())
         .map_err(|_| codec())?;
 
     let mut samples: Vec<f32> = Vec::new();
@@ -123,9 +130,61 @@ pub(crate) fn decode_capped(path: &Path, max_seconds: u64) -> Result<Sound, Stri
     Ok(Sound { samples, rate })
 }
 
+/// HE-AAC (v1 adds SBR, v2 parametric stereo too) is plain AAC-LC at half the sample rate, plus
+/// side data that rebuilds the top octave. Symphonia decodes only AAC-LC, so for an HE-AAC
+/// AudioSpecificConfig this returns one for its LC core: the clip plays at the core's rate,
+/// without the top octave (above about 11 kHz), and the side data is skipped. Instagram reels
+/// are HE-AAC. `None` for anything else.
+fn aac_lc_core(asc: &[u8]) -> Option<Box<[u8]>> {
+    let mut at = 0;
+    let mut read = |n: usize| -> Option<u32> {
+        let mut v = 0;
+        for _ in 0..n {
+            let bit = asc.get(at / 8)? >> (7 - at % 8) & 1;
+            v = v << 1 | u32::from(bit);
+            at += 1;
+        }
+        Some(v)
+    };
+    // Explicit HE-AAC signalling: object type 5 (SBR) or 29 (PS), then the core's sample rate
+    // index and channels, the full rate's index, and the core's object type, which must be LC.
+    let object_type = read(5)?;
+    if object_type != 5 && object_type != 29 {
+        return None;
+    }
+    let core_rate = read(4)?;
+    let channels = read(4)?;
+    // 15 escapes to a 24-bit rate: not a core rate this rebuilds.
+    if core_rate == 15 || read(4)? == 15 || read(5)? != 2 {
+        return None;
+    }
+    // Object type 2 (LC), the core's rate and channels, then GASpecificConfig: 1024-sample
+    // frames, no core coder, no extension.
+    let lc = (2 << 11) | (core_rate << 7) | (channels << 3);
+    Some(Box::new((lc as u16).to_be_bytes()))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn he_aac_hands_over_its_lc_core() {
+        // HE-AAC, 44.1 kHz stereo (an Instagram reel's): its core is LC at 22.05 kHz stereo.
+        assert_eq!(
+            aac_lc_core(&[0x2b, 0x92, 0x08, 0x00]).as_deref(),
+            Some(&[0x13, 0x90][..])
+        );
+        // HE-AAC v2 at 48 kHz: a mono LC core at 24 kHz.
+        assert_eq!(
+            aac_lc_core(&[0xeb, 0x09, 0x88, 0x00]).as_deref(),
+            Some(&[0x13, 0x08][..])
+        );
+        // Plain LC (YouTube's) and anything short or odd is left alone.
+        assert_eq!(aac_lc_core(&[0x12, 0x10]), None);
+        assert_eq!(aac_lc_core(&[0x2b]), None);
+        assert_eq!(aac_lc_core(&[]), None);
+    }
 
     /// A 16-bit PCM WAV file from interleaved samples, written by hand.
     fn wav(rate: u32, channels: u16, samples: &[i16]) -> Vec<u8> {
