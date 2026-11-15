@@ -132,6 +132,8 @@ Scenes (`--list-scenes` prints them):
 The window's smallest size is 360x540 (`--size 360x540`). Setup is taller than the window; add
 `--size 400x1150` to see all of the remote's card.
 
+To check a published release: `cargo test -p warble the_live_release -- --ignored`.
+
 To try the phone page on the mock engine: `cargo test -p warble serve_a_mock_board -- --ignored --nocapture`,
 then open the link it prints.
 

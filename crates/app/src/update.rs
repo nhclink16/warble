@@ -180,4 +180,28 @@ mod tests {
             assert_eq!(version(odd), None, "{odd}");
         }
     }
+
+    /// Live: the published latest release is offered to a 0.1.0 Warble as this version, and its
+    /// installer downloads whole. `cargo test -p warble the_live_release -- --ignored`.
+    #[test]
+    #[ignore = "needs the internet and a published release"]
+    fn the_live_release_is_offered_and_downloads() {
+        let json = crate::library::agent()
+            .get(format!(
+                "https://api.github.com/repos/{REPO}/releases/latest"
+            ))
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .expect("asks GitHub")
+            .body_mut()
+            .read_to_string()
+            .expect("reads the release");
+        let release = newer(&json, "0.1.0").expect("offers the latest release");
+        assert_eq!(release.version, env!("CARGO_PKG_VERSION"));
+        let dir = std::env::temp_dir().join("warble-live-release");
+        let file = download(&release, &dir).expect("downloads the installer");
+        assert!(file.is_file());
+        assert_eq!(std::fs::metadata(&file).unwrap().len(), release.size);
+        eprintln!("{} ({} bytes)", file.display(), release.size);
+    }
 }
