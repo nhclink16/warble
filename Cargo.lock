@@ -4061,7 +4061,7 @@ dependencies = [
 
 [[package]]
 name = "warble"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "httparse",
  "png 0.18.1",
@@ -4078,11 +4078,11 @@ dependencies = [
 
 [[package]]
 name = "warble-dsp"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "warble-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cpal",
  "rtrb",

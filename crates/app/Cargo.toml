@@ -4,6 +4,7 @@ description = "Warble: a lightweight voice changer and soundboard for Discord an
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 warble-engine.workspace = true

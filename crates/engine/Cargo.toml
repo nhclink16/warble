@@ -4,6 +4,7 @@ description = "Warble's audio engine: mic in, voice effects and soundboard, out 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 warble-dsp.workspace = true

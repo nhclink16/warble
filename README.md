@@ -29,7 +29,8 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
 1. **Install VB-CABLE**, a free virtual audio cable: <https://vb-audio.com/Cable/>.
    Unzip it, right-click `VBCABLE_Setup_x64.exe` → *Run as administrator* → *Install Driver*, then restart the PC.
    Warble sends your changed voice into this cable. Discord and games then hear the cable as a microphone.
-2. **Install Warble.** Run `Warble-Setup-0.1.0.exe` and click *Install*. It puts Warble in
+2. **Install Warble.** Download `Warble-Setup-<version>.exe` from the latest release
+   (<https://github.com/nhclink16/warble/releases/latest>), run it and click *Install*. It puts Warble in
    `%LOCALAPPDATA%\Programs\Warble` and the Start menu, so you can open it by typing "Warble" in Start,
    PowerToys Run or Raycast. It needs no admin rights.
    Windows may say "Windows protected your PC" the first time because the installer isn't signed.
@@ -97,8 +98,13 @@ works in any phone browser. *Add to Home Screen* keeps it one tap away.
 Closing the window keeps Warble running in the tray. Opening it again (from Start or a launcher) brings
 that window back rather than starting a second copy. To quit, right-click the tray icon → *Quit Warble*.
 
-To update, run the new `Warble-Setup` file. It closes Warble and replaces it; your sounds and settings
-stay. To remove Warble: Settings → Apps → Warble → *Uninstall*. That also keeps your sounds and settings
+Warble updates itself. A little after it starts, and once a day while it runs, it asks this repo's
+GitHub releases for a newer version. When there is one, a line above every page offers it: *Update*
+downloads that release's installer, closes Warble, installs the new one and opens it. Your sounds and
+settings stay. The check sends nothing about you or your sounds.
+You can also update by hand: run a newer `Warble-Setup` file.
+
+To remove Warble: Settings → Apps → Warble → *Uninstall*. That also keeps your sounds and settings
 (in `%APPDATA%\Warble`), in case you come back.
 
 ## Develop
@@ -121,6 +127,7 @@ Scenes (`--list-scenes` prints them):
 - Find sounds and Trim: `find-start`, `find`, `find-offline`, `youtube-install`, `trim`.
 - Setup: `setup`, `no-cable`, `hotkeys-failed`, `audio-problem` (the microphone can't be opened), `remote`,
   `remote-tailscale`, `remote-no-network`.
+- Updates: `update` (a newer Warble on offer), `update-getting` (downloading it), `update-failed`.
 
 The window's smallest size is 360x540 (`--size 360x540`). Setup is taller than the window; add
 `--size 400x1150` to see all of the remote's card.
@@ -144,6 +151,10 @@ To make the installer you send people, install NSIS 3 (`makensis`). On Windows, 
 with a `warble.exe` built on Windows: `makensis -DEXE=/path/to/warble.exe -DOUT=/path/to/Warble-Setup.exe
 installer/warble.nsi`. The installer holds only `warble.exe` and its icon: never your sounds, settings or
 keys, which live in `%APPDATA%\Warble`. The version comes from `Cargo.toml`.
+
+To release: bump `version` in the root `Cargo.toml`, build the installer, then publish a GitHub release
+tagged `v<version>` (for example `v0.2.0`) with `Warble-Setup-<version>.exe` attached under exactly that
+name. Running copies offer it within a day. Drafts and pre-releases are never offered.
 The shortcut's icon is `crates/app/assets/warble.ico`, generated from `icon.rs`; after changing the
 drawing, regenerate it with `WARBLE_WRITE_ICO=1 cargo test -p warble`.
 
@@ -152,3 +163,7 @@ Rune is pre-release and pinned to one commit in the root `Cargo.toml`. Bump it o
 
 Fonts: [Inter](https://rsms.me/inter/) and [Martian Mono](https://github.com/evilmartians/mono), both under the
 SIL Open Font License 1.1, are bundled into the app. Their licences are in `crates/app/assets/fonts/`.
+
+## License
+
+Warble is under the MIT License: see [LICENSE](LICENSE).
