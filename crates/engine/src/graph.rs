@@ -1213,7 +1213,9 @@ mod tests {
     #[test]
     fn sounds_take_the_voice_effect_only_when_asked() {
         let differs = |(buf, clean): (Vec<f32>, Vec<f32>)| {
-            buf.iter().zip(&clean).fold(0.0f32, |m, (a, b)| m.max((a - b).abs()))
+            buf.iter()
+                .zip(&clean)
+                .fold(0.0f32, |m, (a, b)| m.max((a - b).abs()))
         };
         // Clean by default, whatever the voice is doing.
         assert!(differs(render_robot(true, false, false)) < 1e-6);
