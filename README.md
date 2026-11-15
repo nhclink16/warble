@@ -28,10 +28,10 @@ Built with Rust and [Rune](https://github.com/anomalyco/rune).
 1. **Install VB-CABLE**, a free virtual audio cable: <https://vb-audio.com/Cable/>.
    Unzip it, right-click `VBCABLE_Setup_x64.exe` → *Run as administrator* → *Install Driver*, then restart the PC.
    Warble sends your changed voice into this cable. Discord and games then hear the cable as a microphone.
-2. **Install Warble.** Put `warble.exe`, `warble.ico` and `install.ps1` in one folder, right-click
-   `install.ps1` → *Run with PowerShell*. It copies Warble to `%LOCALAPPDATA%\Programs\Warble` and adds it
-   to the Start menu, so you can open it by typing "Warble" in Start, PowerToys Run or Raycast.
-   Windows may say "Windows protected your PC" the first time because the app isn't signed.
+2. **Install Warble.** Run `Warble-Setup-0.1.0.exe` and click *Install*. It puts Warble in
+   `%LOCALAPPDATA%\Programs\Warble` and the Start menu, so you can open it by typing "Warble" in Start,
+   PowerToys Run or Raycast. It needs no admin rights.
+   Windows may say "Windows protected your PC" the first time because the installer isn't signed.
    Click *More info* → *Run anyway*.
 3. **In Discord:** Settings → Voice & Video →
    - Input device: **CABLE Output (VB-Audio Virtual Cable)**.
@@ -96,7 +96,9 @@ works in any phone browser. *Add to Home Screen* keeps it one tap away.
 Closing the window keeps Warble running in the tray. Opening it again (from Start or a launcher) brings
 that window back rather than starting a second copy. To quit, right-click the tray icon → *Quit Warble*.
 
-To update, quit Warble and run `install.ps1` again with the new `warble.exe`.
+To update, run the new `Warble-Setup` file. It closes Warble and replaces it; your sounds and settings
+stay. To remove Warble: Settings → Apps → Warble → *Uninstall*. That also keeps your sounds and settings
+(in `%APPDATA%\Warble`), in case you come back.
 
 ## Develop
 
@@ -136,6 +138,11 @@ CARGO_FEATURE_PURE=1 cargo check --workspace --all-targets --target x86_64-pc-wi
 
 To install a release build from the repo on Windows: `cargo build --release -p warble`, then
 `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`.
+To make the installer you send people, install NSIS 3 (`makensis`). On Windows, after the release build:
+`makensis installer\warble.nsi`, which writes `target\Warble-Setup-<version>.exe` (about 7 MB). On Linux,
+with a `warble.exe` built on Windows: `makensis -DEXE=/path/to/warble.exe -DOUT=/path/to/Warble-Setup.exe
+installer/warble.nsi`. The installer holds only `warble.exe` and its icon: never your sounds, settings or
+keys, which live in `%APPDATA%\Warble`. The version comes from `Cargo.toml`.
 The shortcut's icon is `crates/app/assets/warble.ico`, generated from `icon.rs`; after changing the
 drawing, regenerate it with `WARBLE_WRITE_ICO=1 cargo test -p warble`.
 
